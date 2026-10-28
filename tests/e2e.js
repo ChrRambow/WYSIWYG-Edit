@@ -151,6 +151,22 @@ async function waitForServer() {
     await page.click('.block:has-text("Row of boxes")');
     assert.strictEqual(await frame.locator('div[style*="flex:1 1 220px"]').count(), 3);
 
+    // 12. Any element can be dragged without selecting it first; inline ones land between words.
+    await page.keyboard.press('Escape');
+    async function dragTo(source, tx, ty) {
+      const b = await source.boundingBox();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2 + 20, b.y + b.height / 2 + 20, { steps: 3 });
+      await page.mouse.move(tx, ty, { steps: 10 });
+      await page.mouse.up();
+    }
+    await page.evaluate(() => WSE.state.win.scrollTo(0, 0));
+    const heroP = await frame.locator('.hero-text p', { hasText: 'Baked' }).boundingBox();
+    await dragTo(frame.locator('.logo img'), heroP.x + 2, heroP.y + 12);
+    assert.strictEqual(await frame.locator('.hero-text p img').count(), 1, 'image dropped into the text');
+    assert.strictEqual(await frame.locator('.logo img').count(), 0);
+
     await page.click('#btn-save');
     await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
     const saved = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
@@ -163,6 +179,7 @@ async function waitForServer() {
     assert.match(saved, /<summary style="cursor:pointer;font-weight:600">Opening hours<\/summary>/);
     assert.ok(!saved.includes('<details open'), 'closed state saved');
     assert.match(saved, /from organic flour\.<\/p><p>Second line<\/p>/);
+    assert.match(saved, /<p><img src="images\/logo.svg"[^>]*>Baked by hand/);
     assert.ok(saved.includes('<img class="hero-image" src="images/cake.svg" alt="A loaf of bread">'), 'image changed');
     assert.ok(!/contenteditable|wse-helper|x-wse-off/.test(saved), 'no editor leftovers');
     assert.ok(fs.readdirSync(path.join(home, '.wysiwyg-edit', 'backups')).length === 1, 'backup made');

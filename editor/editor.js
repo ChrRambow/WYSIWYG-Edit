@@ -294,7 +294,7 @@
     // Editor-only helper styles, removed again before saving.
     var helper = doc.createElement('style');
     helper.id = 'wse-helper';
-    helper.textContent = '[contenteditable]{outline:none;cursor:text}';
+    helper.textContent = 'body *{cursor:grab}[contenteditable],[contenteditable] *{outline:none;cursor:text}';
     doc.head.appendChild(helper);
 
     doc.addEventListener('mouseover', onFrameOver, true);
@@ -337,10 +337,14 @@
 
   function onFrameMouseDown(e) {
     if (state.editing && !state.editing.contains(e.target)) finishEditing();
-    // Pressing on the selected element and moving the mouse drags it.
-    if (e.button === 0 && !state.editing && state.selected && state.selected.contains(e.target)) {
+    // Pressing on any element and moving the mouse drags it. Inside the
+    // selected element the selected element is dragged, so after choosing a
+    // parent (breadcrumbs or the ⤒ button) the whole box can be moved.
+    var target = selectable(e.target);
+    if (e.button === 0 && !state.editing && target) {
       e.preventDefault(); // no text selection while dragging; click and double-click still work
-      beginDrag(e, { node: state.selected }, 'frame');
+      var node = state.selected && state.selected.contains(target) ? state.selected : target;
+      beginDrag(e, { node: node }, 'frame');
     }
   }
 
@@ -1267,6 +1271,13 @@
     var node = pending.what.node;
     if (pos.before === node) return;
     var oldParent = node.parentNode, oldNext = node.nextSibling;
+    if (pos.split !== undefined) {
+      pos.parent.insertBefore(node, pos.before.splitText(pos.split));
+      pos.parent.normalize(); // no empty text pieces left behind
+      select(node);
+      commit();
+      return;
+    }
     pos.parent.insertBefore(node, pos.before);
     if (node.parentNode === oldParent && node.nextSibling === oldNext) return;
     select(node);
@@ -1292,16 +1303,41 @@
     });
   }
 
+  /* Elements that only belong in one kind of parent (and parents that only take them). */
+  var ONLY_IN = {
+    LI: /^(UL|OL)$/, SUMMARY: /^DETAILS$/, DT: /^DL$/, DD: /^DL$/, TR: /^(TABLE|TBODY|THEAD|TFOOT)$/,
+    TD: /^TR$/, TH: /^TR$/, OPTION: /^(SELECT|OPTGROUP|DATALIST)$/, SOURCE: /^(PICTURE|VIDEO|AUDIO)$/
+  };
+  var ONLY_TAKES = /^(UL|OL|DL|TABLE|TBODY|THEAD|TFOOT|TR|SELECT|PICTURE)$/;
+
   function allowedParent(parent, moving) {
     var tag = moving ? moving.tagName : '';
-    if (tag === 'LI') return /^(UL|OL)$/.test(parent.tagName);
-    return !/^(UL|OL)$/.test(parent.tagName);
+    if (ONLY_IN[tag]) return ONLY_IN[tag].test(parent.tagName);
+    return !ONLY_TAKES.test(parent.tagName);
+  }
+
+  var TEXT_BLOCKS = /^(P|H[1-6]|LI|SUMMARY|BLOCKQUOTE|FIGCAPTION|TD|TH|LABEL|DT|DD|SPAN|A|STRONG|EM|B|I|SMALL)$/;
+
+  /* An inline element (link, image, bold text...) can be dropped between two words. */
+  function textDrop(x, y, moving) {
+    if (!moving || !state.doc.caretRangeFromPoint || ONLY_IN[moving.tagName]) return null;
+    if (!isInline(moving) && !/^(IMG|BR)$/.test(moving.tagName)) return null;
+    var range = state.doc.caretRangeFromPoint(x, y);
+    if (!range || range.startContainer.nodeType !== 3) return null;
+    var text = range.startContainer;
+    var parent = text.parentNode;
+    if (!parent || moving.contains(parent) || !TEXT_BLOCKS.test(parent.tagName)) return null;
+    if (!text.nodeValue.trim()) return null;
+    var rect = range.getBoundingClientRect();
+    return { parent: parent, before: text, split: range.startOffset, caret: rect };
   }
 
   /* Where to drop, as { parent, before } for parent.insertBefore(). */
   function dropPosition(x, y) {
     var doc = state.doc;
     var moving = drag.pending.what.node || null;
+    var inText = textDrop(x, y, moving);
+    if (inText) return inText;
     var target = doc.elementFromPoint(x, y) || doc.body;
     if (target === doc.documentElement) target = doc.body;
     // Never drop an element into itself.
@@ -1346,8 +1382,14 @@
   function showDropLine(pos) {
     var line = $('#drop-line');
     if (!pos) { line.hidden = true; return; }
-    var r = pos.ref.getBoundingClientRect();
     line.hidden = false;
+    if (pos.caret) {
+      line.className = 'drop-line vertical';
+      line.style.left = pos.caret.left - 1 + 'px'; line.style.top = pos.caret.top + 'px';
+      line.style.width = '3px'; line.style.height = Math.max(pos.caret.height, 14) + 'px';
+      return;
+    }
+    var r = pos.ref.getBoundingClientRect();
     line.className = 'drop-line' + (pos.empty ? ' fill' : pos.row ? ' vertical' : '');
     if (pos.empty) {
       line.style.left = r.left + 'px'; line.style.top = r.top + 'px';
