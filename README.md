@@ -37,8 +37,9 @@ To try it out, open the included `example-site` folder.
 | **Edit text** | Double-click any text and type. Bold, italic, underline and links are in the small toolbar. `Enter` starts a new paragraph, `Shift+Enter` a line break, `Esc` finishes. |
 | **Change images** | Double-click an image, pick one from the website or upload a new one. |
 | **Links** | Select a link, then **Settings** → link address and "open in new tab". |
-| **Add blocks** | Headings, paragraphs, images, buttons, lists, sections, 2 or 3 columns, dividers, spacers and YouTube videos from the left panel. They are inserted below the selected element. |
-| **Move, duplicate, delete** | With the buttons above the selected element, or `Delete` on the keyboard. |
+| **Add blocks** | Headings, paragraphs, images, buttons, lists, sections, 2 or 3 columns, dividers, spacers and YouTube videos from the left panel. Click to insert below the selected element, or drag them onto the page. |
+| **Move boxes** | Click a box to select it, then drag it with the mouse (or the ✥ handle) to another place. A blue line shows where it lands and a dashed outline shows the box it goes into. Blocks from the left panel can be dragged onto the page too. |
+| **Duplicate, delete** | With the buttons above the selected element (↑ ↓ also move it one step), or `Delete` on the keyboard. |
 | **Styles** | The **Style** panel changes font, size, color, alignment, background, spacing, size, layout, borders and shadows. |
 | **Responsive** | Switch between **Desktop**, **Tablet** and **Mobile** at the top. Style changes made in Tablet or Mobile only apply to those screen sizes, and you can hide elements on one size only. |
 | **HTML** | The **HTML** tab shows the code of the selected element for small fixes. |

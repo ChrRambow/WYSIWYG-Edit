@@ -109,6 +109,11 @@ input[type=text]:focus, select:focus, textarea:focus { outline: 2px solid var(--
 .toolbar button:hover { background: rgba(255,255,255,.2); }
 .toolbar .done { background: #fff; color: var(--accent); font-weight: 600; margin-left: 4px; }
 .toolbar .done:hover { background: #eef2ff; }
+.drag-cover { position: absolute; inset: 0; z-index: 2; cursor: grabbing; }
+.drop-line { position: absolute; background: var(--accent); border-radius: 2px; pointer-events: none; box-shadow: 0 0 0 2px rgba(255,255,255,.8); }
+.drop-line.fill { background: rgba(37, 99, 235, .12); outline: 2px dashed var(--accent); box-shadow: none; }
+.toolbar .grip { cursor: grab; }
+body.dragging, body.dragging * { cursor: grabbing !important; user-select: none; }
 .tb-label { padding: 0 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .rte { background: #111827; }
 

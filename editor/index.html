@@ -64,10 +64,13 @@
       <section class="canvas" id="canvas">
         <div class="frame-wrap" id="frame-wrap">
           <iframe id="frame" title="Page"></iframe>
+          <div class="drag-cover" id="drag-cover" hidden></div>
           <div class="overlay" id="overlay">
             <div class="box hover-box" id="hover-box" hidden></div>
             <div class="box select-box" id="select-box" hidden></div>
+            <div class="drop-line" id="drop-line" hidden></div>
             <div class="toolbar" id="el-toolbar" hidden>
+              <button data-act="drag" class="grip" data-i18n-title="dragMove">✥</button>
               <span class="tb-label" id="tb-label"></span>
               <button data-act="parent" data-i18n-title="selectParent">⤒</button>
               <button data-act="up" data-i18n-title="moveUp">↑</button>

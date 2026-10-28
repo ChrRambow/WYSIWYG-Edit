@@ -337,6 +337,11 @@
 
   function onFrameMouseDown(e) {
     if (state.editing && !state.editing.contains(e.target)) finishEditing();
+    // Pressing on the selected element and moving the mouse drags it.
+    if (e.button === 0 && !state.editing && state.selected && state.selected.contains(e.target)) {
+      e.preventDefault(); // no text selection while dragging; click and double-click still work
+      beginDrag(e, { node: state.selected }, 'frame');
+    }
   }
 
   function onFrameClick(e) {
@@ -509,6 +514,7 @@
       return;
     }
     if (name === 'image') return changeImage();
+    if (name === 'drag') return; // handled by mousedown, see drag and drop
     if (name === 'up' || name === 'down') {
       var sib = name === 'up' ? node.previousElementSibling : node.nextElementSibling;
       while (sib && isPlaceholder(sib)) sib = name === 'up' ? sib.previousElementSibling : sib.nextElementSibling;
@@ -1122,7 +1128,7 @@
     return last ? { after: last } : { inside: container };
   }
 
-  function insertBlock(block) {
+  function insertBlock(block, pos) {
     if (!state.doc) return;
     var html = block.html ? block.html() : null;
     if (block.video) {
@@ -1132,8 +1138,12 @@
     var tpl = state.doc.createElement('template');
     tpl.innerHTML = html;
     var node = tpl.content.firstElementChild;
-    var at = insertPoint();
-    if (at.after) at.after.after(node); else at.inside.appendChild(node);
+    if (pos) {
+      pos.parent.insertBefore(node, pos.before);
+    } else {
+      var at = insertPoint();
+      if (at.after) at.after.after(node); else at.inside.appendChild(node);
+    }
     // Keep the source readable: put the new block on its own line.
     node.before(state.doc.createTextNode('\n'));
     select(node);
@@ -1145,11 +1155,176 @@
   function buildBlocks() {
     var root = $('#blocks');
     BLOCKS.forEach(function (b) {
-      root.appendChild(el('button', { 'class': 'block', onclick: function () { insertBlock(b); } }, [
+      root.appendChild(el('button', {
+        'class': 'block',
+        onclick: function () { if (!drag.justDropped) insertBlock(b); },
+        onmousedown: function (e) { if (e.button === 0) beginDrag(e, { block: b }, 'parent'); }
+      }, [
         el('span', { 'class': 'block-icon', text: b.icon }), el('span', { text: t(b.key) })
       ]));
     });
   }
+
+  // ------------------------------------------------------------ drag and drop
+
+  /*
+   * Elements (and new blocks from the left panel) can be dragged to another
+   * place on the page. While dragging, a transparent cover lies over the
+   * page so all mouse moves arrive in one place; the element under the
+   * pointer is found with elementFromPoint and a blue line shows where the
+   * dragged element will land.
+   */
+  var CONTAINERS = /^(DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|NAV|FIGURE|FORM|BLOCKQUOTE|TD|TH|LI|BODY|UL|OL)$/;
+  var drag = { pending: null, active: false, pos: null, justDropped: false };
+
+  function beginDrag(e, what, origin) {
+    drag.pending = { what: what, x: e.screenX, y: e.screenY, origin: origin };
+    drag.justDropped = false;
+  }
+
+  function onDragMove(e) {
+    if (!drag.pending) return;
+    if (!drag.active) {
+      if (Math.abs(e.screenX - drag.pending.x) + Math.abs(e.screenY - drag.pending.y) < 6) return;
+      drag.active = true;
+      $('#drag-cover').hidden = false;
+      document.body.classList.add('dragging');
+      if (drag.pending.what.node) state.hovered = null;
+    }
+    e.preventDefault();
+    var wrap = $('#frame-wrap').getBoundingClientRect();
+    var x, y;
+    if (e.view === window) { x = e.clientX - wrap.left; y = e.clientY - wrap.top; }
+    else { x = e.clientX; y = e.clientY; } // event from inside the page
+    autoScroll(y, wrap.height);
+    drag.pos = dropPosition(x, y);
+    showDropLine(drag.pos);
+    // Outline the box the element will land in.
+    state.hovered = drag.pos && drag.pos.parent !== state.doc.body ? drag.pos.parent : null;
+  }
+
+  function onDragEnd() {
+    var pending = drag.pending;
+    drag.pending = null;
+    if (!drag.active) return;
+    drag.active = false;
+    drag.justDropped = true;
+    setTimeout(function () { drag.justDropped = false; }, 0);
+    $('#drag-cover').hidden = true;
+    $('#drop-line').hidden = true;
+    document.body.classList.remove('dragging');
+    var pos = drag.pos;
+    drag.pos = null;
+    if (!pos) return;
+    if (pending.what.block) return insertBlock(pending.what.block, pos);
+    var node = pending.what.node;
+    if (pos.before === node) return;
+    var oldParent = node.parentNode, oldNext = node.nextSibling;
+    pos.parent.insertBefore(node, pos.before);
+    if (node.parentNode === oldParent && node.nextSibling === oldNext) return;
+    select(node);
+    commit();
+  }
+
+  function autoScroll(y, height) {
+    var edge = 40;
+    if (y < edge) state.win.scrollBy(0, -Math.ceil((edge - y) / 2));
+    else if (y > height - edge) state.win.scrollBy(0, Math.ceil((y - height + edge) / 2));
+  }
+
+  /* Lays the children of a container out side by side? */
+  function isRow(container) {
+    var cs = state.win.getComputedStyle(container);
+    return (/flex/.test(cs.display) && !/column/.test(cs.flexDirection)) || /grid/.test(cs.display);
+  }
+
+  function children(container, except) {
+    return Array.prototype.filter.call(container.children, function (c) {
+      return c !== except && !isPlaceholder(c) && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName) &&
+        state.win.getComputedStyle(c).display !== 'none';
+    });
+  }
+
+  function allowedParent(parent, moving) {
+    var tag = moving ? moving.tagName : '';
+    if (tag === 'LI') return /^(UL|OL)$/.test(parent.tagName);
+    return !/^(UL|OL)$/.test(parent.tagName);
+  }
+
+  /* Where to drop, as { parent, before } for parent.insertBefore(). */
+  function dropPosition(x, y) {
+    var doc = state.doc;
+    var moving = drag.pending.what.node || null;
+    var target = doc.elementFromPoint(x, y) || doc.body;
+    if (target === doc.documentElement) target = doc.body;
+    // Never drop an element into itself.
+    if (moving && moving.contains(target)) target = moving;
+    var node = target;
+    while (node !== doc.body) {
+      if (node !== moving && CONTAINERS.test(node.tagName) && allowedParent(node, moving)) {
+        var r = node.getBoundingClientRect();
+        var inner = Math.min(16, r.width / 4, r.height / 4);
+        var inside = x > r.left + inner && x < r.right - inner && y > r.top + inner && y < r.bottom - inner;
+        if (inside && !(moving && node.contains(moving) && children(node, moving).length === 0)) {
+          return positionAmong(node, x, y, moving);
+        }
+      }
+      if (node.parentElement && allowedParent(node.parentElement, moving) && node.parentElement !== moving) {
+        // Near the edge of a non-container (or of a container): before or after it.
+        var pr = node.getBoundingClientRect();
+        var row = isRow(node.parentElement);
+        var after = row ? x > pr.left + pr.width / 2 : y > pr.top + pr.height / 2;
+        if (!CONTAINERS.test(node.tagName) || !node.contains(moving)) {
+          return { parent: node.parentElement, before: after ? node.nextSibling : node, ref: node, after: after, row: row };
+        }
+      }
+      node = node.parentElement;
+    }
+    return positionAmong(doc.body, x, y, moving);
+  }
+
+  function positionAmong(container, x, y, moving) {
+    var list = children(container, moving);
+    var row = isRow(container);
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i].getBoundingClientRect();
+      var before = row ? (x < r.left + r.width / 2 && y < r.bottom) : y < r.top + r.height / 2;
+      if (before) return { parent: container, before: list[i], ref: list[i], after: false, row: row };
+    }
+    var last = list[list.length - 1];
+    if (last) return { parent: container, before: last.nextSibling, ref: last, after: true, row: row };
+    return { parent: container, before: null, ref: container, empty: true };
+  }
+
+  function showDropLine(pos) {
+    var line = $('#drop-line');
+    if (!pos) { line.hidden = true; return; }
+    var r = pos.ref.getBoundingClientRect();
+    line.hidden = false;
+    line.className = 'drop-line' + (pos.empty ? ' fill' : pos.row ? ' vertical' : '');
+    if (pos.empty) {
+      line.style.left = r.left + 'px'; line.style.top = r.top + 'px';
+      line.style.width = r.width + 'px'; line.style.height = Math.max(r.height, 8) + 'px';
+    } else if (pos.row) {
+      line.style.left = (pos.after ? r.right : r.left) - 2 + 'px'; line.style.top = r.top + 'px';
+      line.style.width = '4px'; line.style.height = r.height + 'px';
+    } else {
+      line.style.left = r.left + 'px'; line.style.top = (pos.after ? r.bottom : r.top) - 2 + 'px';
+      line.style.width = r.width + 'px'; line.style.height = '4px';
+    }
+  }
+
+  document.addEventListener('mousemove', onDragMove);
+  document.addEventListener('mouseup', onDragEnd);
+  frame.addEventListener('load', function () {
+    frame.contentDocument.addEventListener('mousemove', onDragMove, true);
+    frame.contentDocument.addEventListener('mouseup', onDragEnd, true);
+  });
+
+  $('#el-toolbar [data-act="drag"]').addEventListener('mousedown', function (e) {
+    e.preventDefault();
+    if (e.button === 0 && state.selected) beginDrag(e, { node: state.selected }, 'parent');
+  });
 
   // ------------------------------------------------------------ history
 

@@ -117,6 +117,28 @@ async function waitForServer() {
     await frame.locator('.hero-image').dblclick();
     await page.click('.thumb[title="images/cake.svg"]');
 
+    // 9. Drag the "Coffee" card in front of the "Bread" card.
+    const coffee = frame.locator('.card').nth(2);
+    await coffee.click({ position: { x: 5, y: 5 } });
+    const from = await coffee.boundingBox();
+    const to = await frame.locator('.card').first().boundingBox();
+    await page.mouse.move(from.x + 10, from.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 30, from.y + 20, { steps: 3 });
+    await page.mouse.move(to.x + 10, to.y + to.height / 2, { steps: 8 });
+    await page.mouse.up();
+    assert.deepStrictEqual(await frame.locator('.card h2').allInnerTexts(), ['Coffee', 'Bread', 'Cakes']);
+
+    // 10. Drag a new heading block from the panel to the top of the features.
+    const block = await page.locator('.block:has-text("Heading")').boundingBox();
+    await page.mouse.move(block.x + 20, block.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(block.x + 60, block.y + 40, { steps: 3 });
+    const card = await frame.locator('.card').first().boundingBox();
+    await page.mouse.move(card.x + card.width / 2, card.y + 4, { steps: 8 });
+    await page.mouse.up();
+    assert.strictEqual(await frame.locator('.features > h2').count(), 1, 'block dropped into the grid');
+
     await page.click('#btn-save');
     await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
     const saved = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
