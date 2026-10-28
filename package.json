@@ -1,0 +1,14 @@
+{
+  "name": "wysiwyg-edit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small visual editor for static HTML websites",
+  "license": "MIT",
+  "scripts": {
+    "start": "python3 server.py",
+    "test": "python3 -m unittest discover tests && node tests/e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

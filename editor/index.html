@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WYSIWYG Edit</title>
+  <link rel="icon" href="/app/icon.svg">
+  <link rel="stylesheet" href="/app/editor.css">
+  <script src="/app/i18n.js"></script>
+</head>
+<body>
+
+  <!-- Start screen: choose the website folder -->
+  <div id="start" class="start" hidden>
+    <div class="start-card">
+      <img src="/app/icon.svg" alt="" width="56" height="56">
+      <h1 data-i18n="openTitle"></h1>
+      <p data-i18n="openIntro"></p>
+      <button id="choose-folder" class="btn primary big" data-i18n="chooseFolder"></button>
+      <form id="path-form" class="path-form">
+        <label for="path-input" data-i18n="orTypePath"></label>
+        <div class="row">
+          <input id="path-input" type="text" placeholder="/Users/me/Documents/my-website" spellcheck="false">
+          <button class="btn" type="submit" data-i18n="open"></button>
+        </div>
+      </form>
+      <div id="recent-wrap" hidden>
+        <h2 data-i18n="recent"></h2>
+        <ul id="recent" class="recent"></ul>
+      </div>
+      <p id="start-error" class="error" hidden></p>
+    </div>
+  </div>
+
+  <!-- Editor -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <button id="btn-folder" class="btn ghost folder-btn" data-i18n-title="folder">
+        <span class="i">📁</span> <span id="site-name"></span>
+      </button>
+      <select id="page-select" class="page-select" data-i18n-title="page"></select>
+      <div class="sep"></div>
+      <div class="devices" role="group">
+        <button class="btn ghost device active" data-device="desktop" data-i18n-title="desktop">🖥 <span data-i18n="desktop"></span></button>
+        <button class="btn ghost device" data-device="tablet" data-i18n-title="tablet">▭ <span data-i18n="tablet"></span></button>
+        <button class="btn ghost device" data-device="mobile" data-i18n-title="mobile">▯ <span data-i18n="mobile"></span></button>
+      </div>
+      <div class="sep"></div>
+      <button id="btn-undo" class="btn ghost" data-i18n-title="undo" disabled>↶</button>
+      <button id="btn-redo" class="btn ghost" data-i18n-title="redo" disabled>↷</button>
+      <div class="spacer"></div>
+      <button id="btn-phone" class="btn ghost" data-i18n="phone"></button>
+      <button id="btn-preview" class="btn" data-i18n="preview"></button>
+      <button id="btn-save" class="btn primary" data-i18n="save"></button>
+    </header>
+
+    <div class="main">
+      <aside class="left panel">
+        <h3 data-i18n="add"></h3>
+        <p class="hint" data-i18n="addHint"></p>
+        <div id="blocks" class="blocks"></div>
+      </aside>
+
+      <section class="canvas" id="canvas">
+        <div class="frame-wrap" id="frame-wrap">
+          <iframe id="frame" title="Page"></iframe>
+          <div class="overlay" id="overlay">
+            <div class="box hover-box" id="hover-box" hidden></div>
+            <div class="box select-box" id="select-box" hidden></div>
+            <div class="toolbar" id="el-toolbar" hidden>
+              <span class="tb-label" id="tb-label"></span>
+              <button data-act="parent" data-i18n-title="selectParent">⤒</button>
+              <button data-act="up" data-i18n-title="moveUp">↑</button>
+              <button data-act="down" data-i18n-title="moveDown">↓</button>
+              <button data-act="edit" data-i18n-title="editText">✎</button>
+              <button data-act="image" data-i18n-title="changeImage">🖼</button>
+              <button data-act="duplicate" data-i18n-title="duplicate">⧉</button>
+              <button data-act="delete" data-i18n-title="remove">🗑</button>
+            </div>
+            <div class="toolbar rte" id="rte-toolbar" hidden>
+              <button data-cmd="bold" data-i18n-title="bold"><b>B</b></button>
+              <button data-cmd="italic" data-i18n-title="italic"><i>I</i></button>
+              <button data-cmd="underline" data-i18n-title="underline"><u>U</u></button>
+              <button data-cmd="createLink" data-i18n-title="makeLink">🔗</button>
+              <button data-cmd="unlink" data-i18n-title="unlink">⛓</button>
+              <button data-cmd="removeFormat" data-i18n-title="clearFormat">⌫</button>
+              <button data-cmd="done" class="done" data-i18n="done"></button>
+            </div>
+          </div>
+        </div>
+        <nav class="crumbs" id="crumbs"></nav>
+      </section>
+
+      <aside class="right panel">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="style" data-i18n="style"></button>
+          <button class="tab" data-tab="settings" data-i18n="settings"></button>
+          <button class="tab" data-tab="html" data-i18n="html"></button>
+        </div>
+        <div class="empty" id="empty-note" data-i18n="nothingSelected"></div>
+        <div class="tab-body" id="tab-style"></div>
+        <div class="tab-body" id="tab-settings" hidden></div>
+        <div class="tab-body" id="tab-html" hidden>
+          <p class="hint" data-i18n="htmlHint"></p>
+          <textarea id="html-code" spellcheck="false"></textarea>
+          <button id="html-apply" class="btn primary" data-i18n="apply"></button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Dialogs -->
+  <dialog id="image-dialog" class="dialog">
+    <header><h2 data-i18n="images"></h2><button class="btn ghost" data-close>✕</button></header>
+    <div id="image-grid" class="image-grid"></div>
+    <footer>
+      <label class="btn"><span data-i18n="upload"></span><input id="image-upload" type="file" accept="image/*" hidden></label>
+      <div class="spacer"></div>
+      <button class="btn" data-close data-i18n="cancel"></button>
+    </footer>
+  </dialog>
+
+  <dialog id="phone-dialog" class="dialog small">
+    <header><h2 data-i18n="phoneTitle"></h2><button class="btn ghost" data-close>✕</button></header>
+    <p data-i18n="phoneText"></p>
+    <p class="phone-url"><a id="phone-url" target="_blank"></a></p>
+    <p class="hint" data-i18n="phoneNote"></p>
+    <footer><div class="spacer"></div><button class="btn primary" data-close data-i18n="close"></button></footer>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app/styles.js"></script>
+  <script src="/app/editor.js"></script>
+</body>
+</html>
