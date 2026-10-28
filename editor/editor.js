@@ -479,6 +479,7 @@
     $('#tb-label').textContent = label(state.selected);
     $('#el-toolbar [data-act="edit"]').hidden = !textTarget(state.selected);
     $('#el-toolbar [data-act="image"]').hidden = state.selected.tagName !== 'IMG';
+    $('#el-toolbar [data-act="toggle"]').hidden = !accordionOf(state.selected);
     refreshStylePanel();
     renderSettings();
     $('#html-code').value = restoreScripts(state.selected.outerHTML);
@@ -514,6 +515,7 @@
       return;
     }
     if (name === 'image') return changeImage();
+    if (name === 'toggle') return toggleAccordion(accordionOf(node));
     if (name === 'drag') return; // handled by mousedown, see drag and drop
     if (name === 'up' || name === 'down') {
       var sib = name === 'up' ? node.previousElementSibling : node.nextElementSibling;
@@ -549,6 +551,21 @@
       select(next && next !== state.doc.body && !isPlaceholder(next) ? next : null);
       commit();
     }
+  }
+
+  /* The <details> an element is (the title of), for opening and closing it. */
+  function accordionOf(node) {
+    if (!node) return null;
+    if (node.tagName === 'DETAILS') return node;
+    if (node.tagName === 'SUMMARY' && node.parentElement && node.parentElement.tagName === 'DETAILS') return node.parentElement;
+    return null;
+  }
+
+  function toggleAccordion(details) {
+    if (!details) return;
+    details.open = !details.open;
+    commit();
+    renderPanels();
   }
 
   function isPlaceholder(node) {
@@ -1042,6 +1059,13 @@
       });
       root.appendChild(el('label', { 'class': 'check' }, [box, t('newTab')]));
     }
+    var details = accordionOf(node);
+    if (details) {
+      var openBox = el('input', { type: 'checkbox' });
+      openBox.checked = details.open;
+      openBox.addEventListener('change', function () { toggleAccordion(details); });
+      root.appendChild(el('label', { 'class': 'check' }, [openBox, t('openOnLoad')]));
+    }
     if (tag === 'IMG') {
       var row = el('div', { 'class': 'row' }, [attrInput(node, 'src'),
         el('button', { 'class': 'btn small', text: t('choose'), onclick: changeImage })]);
@@ -1092,8 +1116,31 @@
     { key: 'blkThreeCols', icon: '▥', html: function () { return columns(3); } },
     { key: 'blkDivider', icon: '―', html: function () { return '<hr>'; } },
     { key: 'blkSpacer', icon: '↕', html: function () { return '<div style="height:40px"></div>'; } },
+    { key: 'blkBox', icon: '▢', html: function () { return box(); } },
+    { key: 'blkRow', icon: '▢▢', html: function () {
+      return '<div style="display:flex;flex-wrap:wrap;gap:24px">\n' + box('flex:1 1 220px;') + '\n' +
+        box('flex:1 1 220px;') + '\n' + box('flex:1 1 220px;') + '\n</div>';
+    } },
+    { key: 'blkAccordion', icon: '☰', html: function () {
+      var out = '<div style="display:flex;flex-direction:column;gap:8px">\n';
+      for (var i = 1; i <= 3; i++) out += accordionItem(t('newQuestion') + ' ' + i, i === 1) + '\n';
+      return out + '</div>';
+    } },
+    { key: 'blkAccordionItem', icon: '▸', html: function () { return accordionItem(t('newQuestion'), true); } },
     { key: 'blkVideo', icon: '▶', video: true }
   ];
+
+  function box(extra) {
+    return '<div style="' + (extra || '') + 'padding:24px;border:1px solid #e5e7eb;border-radius:8px;background:#ffffff">\n' +
+      '  <h3>' + t('newHeading') + '</h3>\n  <p>' + t('newParagraph') + '</p>\n</div>';
+  }
+
+  /* A native <details> element: opens and closes without any JavaScript. */
+  function accordionItem(title, open) {
+    return '<details' + (open ? ' open' : '') + ' style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;background:#ffffff">\n' +
+      '  <summary style="cursor:pointer;font-weight:600">' + title + '</summary>\n' +
+      '  <p>' + t('newAnswer') + '</p>\n</details>';
+  }
 
   function columns(n) {
     var col = '  <div style="flex:1 1 240px">\n    <p>' + t('newColumn') + '</p>\n  </div>\n';
@@ -1174,7 +1221,7 @@
    * pointer is found with elementFromPoint and a blue line shows where the
    * dragged element will land.
    */
-  var CONTAINERS = /^(DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|NAV|FIGURE|FORM|BLOCKQUOTE|TD|TH|LI|BODY|UL|OL)$/;
+  var CONTAINERS = /^(DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|NAV|FIGURE|FORM|BLOCKQUOTE|TD|TH|LI|BODY|UL|OL|DETAILS)$/;
   var drag = { pending: null, active: false, pos: null, justDropped: false };
 
   function beginDrag(e, what, origin) {
@@ -1531,6 +1578,9 @@
         e.preventDefault();
         if (/^(P|LI)$/.test(state.editing.tagName)) splitBlock();
         else finishEditing();
+      } else if (e.key === ' ' && state.editing.closest('summary')) {
+        e.preventDefault(); // a space would open or close the accordion instead of typing
+        state.doc.execCommand('insertText', false, ' ');
       } else if (e.key === 'Enter' && e.shiftKey) {
         e.preventDefault();
         state.doc.execCommand('insertLineBreak');

@@ -36,8 +36,9 @@ To try it out, open the included `example-site` folder.
 |---|---|
 | **Edit text** | Double-click any text and type. Bold, italic, underline and links are in the small toolbar. `Enter` starts a new paragraph, `Shift+Enter` a line break, `Esc` finishes. |
 | **Change images** | Double-click an image, pick one from the website or upload a new one. |
+| **Accordions** | Built from the standard HTML `<details>` element, so they open and close on the website without any JavaScript. In the editor, the ▾ button (or **Settings** → "Open when the page loads") opens and closes an item; it is saved the way you leave it. Add more items with the "Accordion item" block or by duplicating one. |
 | **Links** | Select a link, then **Settings** → link address and "open in new tab". |
-| **Add blocks** | Headings, paragraphs, images, buttons, lists, sections, 2 or 3 columns, dividers, spacers and YouTube videos from the left panel. Click to insert below the selected element, or drag them onto the page. |
+| **Add blocks** | Headings, paragraphs, images, buttons, lists, sections, 2 or 3 columns, boxes, a row of boxes, accordions, dividers, spacers and YouTube videos from the left panel. Click to insert below the selected element, or drag them onto the page. |
 | **Move boxes** | Click a box to select it, then drag it with the mouse (or the ✥ handle) to another place. A blue line shows where it lands and a dashed outline shows the box it goes into. Blocks from the left panel can be dragged onto the page too. |
 | **Duplicate, delete** | With the buttons above the selected element (↑ ↓ also move it one step), or `Delete` on the keyboard. |
 | **Styles** | The **Style** panel changes font, size, color, alignment, background, spacing, size, layout, borders and shadows. |

@@ -139,6 +139,18 @@ async function waitForServer() {
     await page.mouse.up();
     assert.strictEqual(await frame.locator('.features > h2').count(), 1, 'block dropped into the grid');
 
+    // 11. Insert an accordion, type in a title (with a space), close an item, add a row of boxes.
+    await page.click('.block:has-text("Accordion")');
+    assert.strictEqual(await frame.locator('details').count(), 3);
+    await frame.locator('summary').first().dblclick();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('Opening hours');
+    await page.keyboard.press('Enter');
+    await page.click('#el-toolbar [data-act="toggle"]');
+    assert.strictEqual(await frame.locator('details[open]').count(), 0, 'first item closed');
+    await page.click('.block:has-text("Row of boxes")');
+    assert.strictEqual(await frame.locator('div[style*="flex:1 1 220px"]').count(), 3);
+
     await page.click('#btn-save');
     await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
     const saved = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
@@ -148,6 +160,8 @@ async function waitForServer() {
     assert.ok(!saved.includes('id="contact"'), 'section deleted');
     assert.ok(saved.includes('<a class="button" href="https://example.com">'), 'link changed');
     assert.ok(saved.includes('  <script src="js/main.js"></script>\n</body>\n</html>\n'), 'script kept');
+    assert.match(saved, /<summary style="cursor:pointer;font-weight:600">Opening hours<\/summary>/);
+    assert.ok(!saved.includes('<details open'), 'closed state saved');
     assert.match(saved, /from organic flour\.<\/p><p>Second line<\/p>/);
     assert.ok(saved.includes('<img class="hero-image" src="images/cake.svg" alt="A loaf of bread">'), 'image changed');
     assert.ok(!/contenteditable|wse-helper|x-wse-off/.test(saved), 'no editor leftovers');
