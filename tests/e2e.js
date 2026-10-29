@@ -55,6 +55,8 @@ async function waitForServer() {
   fs.cpSync(path.join(ROOT, 'example-site'), site, { recursive: true });
   fs.writeFileSync(path.join(site, 'tricky.html'), TRICKY);
   fs.writeFileSync(path.join(site, 'after-body.js'), '');
+  fs.copyFileSync(path.join(__dirname, 'fixtures', 'fixed-header.html'), path.join(site, 'fixed-header.html'));
+  fs.copyFileSync(path.join(__dirname, 'fixtures', 'menu-accordion.html'), path.join(site, 'menu-accordion.html'));
   const originalIndex = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
 
   const server = spawn('python3', [path.join(ROOT, 'server.py'), site, '--port', String(PORT), '--no-browser'],
@@ -159,6 +161,8 @@ async function waitForServer() {
       'the dragged card is selected');
 
     // 11. Drag a new heading block from the panel to the top of the features.
+    await live(() => WSE.state.doc.querySelector('.features').scrollIntoView({ block: 'center' }));
+    await sleep(300);
     const block = await page.locator('.block:has-text("Heading")').boundingBox();
     await page.mouse.move(block.x + 20, block.y + 20);
     await page.mouse.down();
@@ -203,13 +207,14 @@ async function waitForServer() {
     await frame().locator('.tab-buttons button').first().click();
     assert.strictEqual(await live(() => WSE.state.selected.className), 'tab-buttons');
 
-    // 16. Moving something into a hidden place warns and offers undo.
+    // 16. Moving something into a hidden place warns and offers undo. The "Weekend" tab opened in
+    //     step 14 stays open after changes, so the first panel is the hidden one.
     await page.click('.ltab[data-ltab="layers"]');
     await page.locator('.layer:has(.layer-cls:text-is(".tab-buttons"))').waitFor();
     const panelRow = page.locator('.layer:has(.layer-cls:text-is(".tab-panel"))').nth(0);
     await panelRow.locator('.layer-caret').click(); // not needed for the drop, keeps the tree stable
     await page.locator('.layer:has(.layer-cls:text-is(".tab-buttons"))').dragTo(
-      page.locator('.layer:has(.layer-cls:text-is(".tab-panel"))').nth(1));
+      page.locator('.layer:has(.layer-cls:text-is(".tab-panel"))').nth(0));
     await settle();
     await page.waitForSelector('#toast-action:not([hidden])');
     await page.click('#toast-action');
@@ -257,23 +262,116 @@ async function waitForServer() {
     assert.strictEqual(fs.readFileSync(path.join(site, 'tricky.html'), 'utf8'),
       TRICKY.replace('Handler &amp; entity', 'Handler &amp; entity!'), 'only the edited text changed');
 
-    // 19. The preview serves the real page with its scripts.
+    // 19. A page with a header that stays on top (a reported bug: dragged things vanished into it).
+    await page.selectOption('#page-select', 'fixed-header.html');
+    await page.waitForFunction(() => WSE.state.page === 'fixed-header.html' && WSE.ready());
+    await sleep(500);
+    const order = () => live(() => Array.from(WSE.state.doc.querySelectorAll('section'))
+      .map((s) => (s.id || 'hero') + '@' + s.parentElement.tagName).join(' '));
+    await frame().locator('#nachhaltigkeit').scrollIntoViewIfNeeded();
+    await sleep(900);
+    const sec = await frame().locator('#nachhaltigkeit h2').boundingBox();
+    const wrapBox = await page.locator('#frame-wrap').boundingBox();
+    await page.mouse.move(sec.x + 300, sec.y - 20);
+    await page.mouse.down();
+    await page.mouse.move(sec.x + 320, sec.y, { steps: 3 });
+    for (let i = 0; i < 40; i++) { await page.mouse.move(sec.x + 320 + (i % 2), wrapBox.y + 60); await sleep(25); }
+    const lei = await frame().locator('#leistungen').boundingBox();
+    await page.mouse.move(sec.x + 320, lei.y + 20, { steps: 5 });
+    await page.mouse.up();
+    await settle();
+    assert.strictEqual(await order(), 'hero@MAIN nachhaltigkeit@MAIN leistungen@MAIN team@MAIN kontakt@MAIN',
+      'section moved within the page, not into the header');
+    assert.strictEqual(await live(() => WSE.state.selected.id), 'nachhaltigkeit', 'moved section stays selected');
+    // Dragging a menu link moves its whole menu item.
+    const team = await frame().locator('nav li', { hasText: 'Team' }).boundingBox();
+    const first = await frame().locator('nav li', { hasText: 'Leistungen' }).boundingBox();
+    await page.mouse.move(team.x + 5, team.y + team.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(team.x + 15, team.y + team.height / 2, { steps: 3 });
+    await page.mouse.move(first.x + 3, first.y + first.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await settle();
+    assert.strictEqual(await live(() => Array.from(WSE.state.doc.querySelectorAll('nav li')).map((l) => l.textContent).join(',')),
+      'Team,Leistungen,Nachhaltigkeit,Kontakt');
+    await live(() => WSE.save());
+    const fixedSaved = fs.readFileSync(path.join(site, 'fixed-header.html'), 'utf8');
+    assert.ok(fixedSaved.indexOf('id="nachhaltigkeit"') < fixedSaved.indexOf('id="leistungen"'));
+    assert.ok(!/ show"|class="fade show/.test(fixedSaved), 'classes added by the page script are not saved');
+
+    // 20. Menus with submenus and accordions (reported: moved menu items and accordion items vanished).
+    await page.selectOption('#page-select', 'menu-accordion.html');
+    await page.waitForFunction(() => WSE.state.page === 'menu-accordion.html' && WSE.ready());
+    await sleep(300);
+    const drag = async (from, to) => {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(from.x + 10, from.y + 5, { steps: 3 });
+      await page.mouse.move(to.x, to.y, { steps: 10 });
+      await page.mouse.up();
+      await settle();
+    };
+    const spot = async (loc, fx, fy) => {
+      const b = await loc.boundingBox();
+      return { x: b.x + b.width * fx, y: b.y + b.height * fy };
+    };
+    const titles = () => live(() => Array.from(WSE.state.src.querySelectorAll('.accordion > *'))
+      .map((d) => d.tagName === 'DETAILS' && d.firstElementChild.tagName === 'SUMMARY' ? d.firstElementChild.textContent : d.tagName).join(','));
+    const menu = () => live(() => Array.from(WSE.state.src.querySelectorAll('#nav > ul > li'))
+      .map((li) => li.firstElementChild.textContent + (li.querySelector('.sub') ? '+' : '')).join(','));
+    const summary = (text) => frame().locator('summary', { hasText: text });
+    // An accordion title moves its whole item, and never into a closed item.
+    await drag(await spot(summary('Nachhaltigkeit'), 0.3, 0.5), await spot(summary('Prophylaxe'), 0.3, 0.9));
+    assert.strictEqual(await titles(), 'Online Anamnese,Prophylaxe,Nachhaltigkeit', 'accordion item moved as a whole');
+    // The link of a menu entry moves the entry with its submenu.
+    const link = (text) => frame().locator('#nav > ul > li > a', { hasText: text });
+    await drag(await spot(link('Team'), 0.5, 0.5), await spot(link('Über uns'), 0.1, 0.5));
+    assert.strictEqual(await menu(), 'Team+,Über uns+,Praxisräume,Leistungen');
+    await drag(await spot(link('Leistungen'), 0.5, 0.5), await spot(link('Team'), 0.6, 0.5));
+    assert.strictEqual(await menu(), 'Team+,Leistungen,Über uns+,Praxisräume', 'never a link inside a link');
+    // What the visitor opened stays open after a change, without being saved.
+    await page.click('#btn-interact');
+    await summary('Nachhaltigkeit').click();
+    await page.keyboard.press('Escape');
+    const para = (i) => frame().locator('details:has(summary:text("Nachhaltigkeit")) p').nth(i);
+    await drag(await spot(para(1), 0.5, 0.5), await spot(para(0), 0.5, 0.1));
+    assert.strictEqual(await para(0).innerText(), 'Zweiter Absatz.');
+    assert.ok(await frame().locator('details:has(summary:text("Nachhaltigkeit"))').evaluate((d) => d.open), 'accordion item stays open');
+    await page.click('.device[data-device="mobile"]');
+    await settle();
+    await page.click('#btn-interact');
+    await frame().locator('.nav-toggle').click();
+    await page.keyboard.press('Escape');
+    await drag(await spot(link('Praxisräume'), 0.3, 0.5), await spot(link('Team'), 0.3, 0.1));
+    assert.strictEqual(await menu(), 'Praxisräume,Team+,Leistungen,Über uns+');
+    assert.ok(await frame().locator('#nav').evaluate((n) => n.classList.contains('open')), 'opened menu stays open');
+    await page.keyboard.press('ControlOrMeta+z');
+    await settle();
+    assert.strictEqual(await menu(), 'Team+,Leistungen,Über uns+,Praxisräume', 'keyboard undo works after a change');
+    await page.click('.device[data-device="desktop"]');
+    await settle();
+    await live(() => WSE.save());
+    const menuSaved = fs.readFileSync(path.join(site, 'menu-accordion.html'), 'utf8');
+    assert.ok(!/main-menu open|<details open>\s*<summary>Nachhaltigkeit/.test(menuSaved), 'opened things are not saved open');
+    assert.match(menuSaved, /<summary>Prophylaxe<\/summary>[\s\S]*<summary>Nachhaltigkeit<\/summary>/);
+
+    // 21. The preview serves the real page with its scripts.
     const preview = await browser.newPage();
     await preview.goto(BASE + 'site/index.html');
     assert.strictEqual(await preview.locator('#year').innerText(), String(new Date().getFullYear()), 'scripts run in preview');
 
-    // 20. Writes are refused without the editor's header.
+    // 22. Writes are refused without the editor's header.
     const res = await fetch(BASE + 'api/save', { method: 'POST', body: '{"path":"index.html","content":"x"}' });
     assert.strictEqual(res.status, 403);
 
-    // 21. Without a folder the start screen opens a site from a typed path.
+    // 23. Without a folder the start screen opens a site from a typed path.
     await live(() => { WSE.state.savedKey = ''; });
     await page.click('#btn-folder');
     await page.fill('#path-input', path.join(site));
     await page.click('#path-form button');
     await page.waitForFunction(() => !document.querySelector('#app').hidden && WSE.ready());
 
-    // 22. The phone preview serves the site read-only on the network.
+    // 24. The phone preview serves the site read-only on the network.
     const phone = await (await fetch(BASE + 'api/phone', { method: 'POST', headers: { 'X-WSE': '1' } })).json();
     const port = new URL(phone.url).port;
     assert.strictEqual((await fetch(`http://127.0.0.1:${port}/index.html`)).status, 200);

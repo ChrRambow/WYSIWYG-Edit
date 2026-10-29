@@ -39,9 +39,9 @@ To try it out, open the included `example-site` folder.
 | **Accordions** | Built from the standard HTML `<details>` element, so they open and close on the website without any JavaScript. In the editor, the ▾ button (or **Settings** → "Open when the page loads") opens and closes an item; it is saved the way you leave it. Add more items with the "Accordion item" block or by duplicating one. |
 | **Links** | Select a link, then **Settings** → link address and "open in new tab". |
 | **Add blocks** | Headings, paragraphs, images, buttons, lists, sections, 2 or 3 columns, boxes, a row of boxes, accordions, dividers, spacers and YouTube videos from the left panel. Click to insert below the selected element, or drag them onto the page. |
-| **Move anything** | Every element can be dragged with the mouse: press on it and drag. A line shows where it lands and an outline shows the box it goes into. Links, images and other inline elements can also be dropped between two words. To move a whole box rather than something inside it, select the box and drag it by the ✥ handle on its toolbar. If something lands in a place that is not visible (for example a hidden menu), the editor says so and offers to undo. |
+| **Move anything** | Every element can be dragged with the mouse: press on it and drag. A line shows where it lands and an outline shows the box it goes into. Links, images and other inline elements can also be dropped between two words. Dragging the title of an accordion item moves the whole item, and dragging a menu link moves the menu entry together with its submenu. To move a whole box rather than something inside it, select the box and drag it by the ✥ handle on its toolbar. If something lands in a place that is not visible (for example a hidden menu), the editor says so and offers to undo. |
 | **Structure** | The **Structure** tab on the left lists every element of the page as a tree. Click to select, drag to move; dropping onto the middle of a box puts the element inside it. Handy for nested or hidden elements. |
-| **Use page** | **Use page** lets you click the page like a visitor (open the mobile menu, switch tabs, move a slider) to reach content you want to edit. `Esc` goes back to editing. |
+| **Use page** | **Use page** lets you click the page like a visitor (open the mobile menu, switch tabs, move a slider) to reach content you want to edit. `Esc` goes back to editing. What you opened stays open while you edit, but is saved the way it was. |
 | **Duplicate, delete** | With the buttons above the selected element (↑ ↓ also move it one step), or `Delete` on the keyboard. |
 | **Styles** | The **Style** panel changes font, size, color, alignment, background, spacing, size, layout, borders and shadows. |
 | **Responsive** | Switch between **Desktop**, **Tablet** and **Mobile** at the top. Style changes made in Tablet or Mobile only apply to those screen sizes, and you can hide elements on one size only. |
@@ -65,8 +65,8 @@ The editor speaks German or English, following the browser's language
   back exactly as it was.
 - **Only what you change changes.** Everything outside `<body>` (doctype,
   `<head>`, comments) is kept character for character. Saving a page without
-  changes writes the identical file. Entities such as `&copy;` stay as they
-  were, and the file keeps its original text encoding.
+  changes writes the identical file. Entities such as `&copy;` and tags written over
+  several lines stay as they were, and the file keeps its original text encoding.
 - **Your CSS files are not touched.** Style changes go into one
   `<style id="wysiwyg-edit-styles">` block in the page's `<head>`, with media
   queries for tablet (up to 991 px) and phone (up to 575 px). Elements you

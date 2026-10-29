@@ -253,6 +253,7 @@
       if (value === null || value === undefined) n.removeAttribute(name);
       else n.setAttribute(name, value);
     });
+    rebase(live, name, value);
   }
 
   function classesOf(live) {
@@ -430,6 +431,7 @@
       state.bodyTrail = /\s*$/.exec(bodySource)[0];
       learnEntities(bodySource);
       learnBareAttributes(bodySource);
+      learnTagLayout(bodySource);
       scripts.forEach(function (s, i) {
         if (s.start < bodyStart || s.start >= bodyEnd) state.dropScripts[i] = true;
       });
@@ -485,6 +487,38 @@
         if (!a[2]) state.bareAttrs[a[1].toLowerCase()] = true;
       }
     }
+  }
+
+  /*
+   * Start tags written over several lines (or with extra spaces) in the
+   * original file: remember them, so an unchanged tag is saved the same way.
+   */
+  function learnTagLayout(bodySource) {
+    state.tagLayout = {};
+    var tagRe = /<([a-zA-Z][^\s\/>]*)((?:\s+[^\s="'\/>]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*(\/?)>/g;
+    var attrRe = /([^\s="'\/>]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?/g, m, a;
+    while ((m = tagRe.exec(bodySource))) {
+      var tidy = '<' + m[1].toLowerCase(), plain = true;
+      attrRe.lastIndex = 0;
+      while ((a = attrRe.exec(m[2]))) {
+        if (a[2] && a[2][0] !== '"') plain = false;
+        tidy += ' ' + a[1].toLowerCase() + (a[2] ? '=' + a[2] : '');
+      }
+      tidy += '>';
+      if (plain && !m[3] && tidy !== m[0]) state.tagLayout[tidy] = m[0];
+    }
+  }
+
+  function keepTagLayout(html) {
+    var map = state.tagLayout || {};
+    if (!Object.keys(map).length) return html;
+    return html.split(/(<(style|script|noscript)\b[\s\S]*?<\/\2\s*>)/i).map(function (part, i) {
+      if (i % 3 === 1) return part;
+      if (i % 3 === 2) return '';
+      return part.replace(/<[a-zA-Z][^>]*>/g, function (tag) {
+        return Object.prototype.hasOwnProperty.call(map, tag) ? map[tag] : tag;
+      });
+    }).join('');
   }
 
   function bareAttributes(html) {
@@ -570,6 +604,9 @@
     if (oldWin) {
       try { win.scrollTo({ left: oldWin.scrollX, top: oldWin.scrollY, behavior: 'instant' }); } catch (e) { /* ignore */ }
     }
+    var base = viewBase(frame.contentDocument);
+    if (oldWin) carryViewState(state.doc, frame.contentDocument, state.viewBase);
+    state.viewBase = base;
     state.frame = frame;
     state.win = win;
     state.doc = frame.contentDocument;
@@ -581,6 +618,8 @@
     }
     frame.classList.add('active');
     if (old !== frame) {
+      // Keyboard shortcuts keep working when the page had the focus.
+      if (document.activeElement === old) { try { win.focus(); } catch (e) { /* ignore */ } }
       old.classList.remove('active');
       setTimeout(function () { if (old !== state.frame) old.src = 'about:blank'; }, 100);
     }
@@ -590,6 +629,62 @@
     renderPanels();
     renderLayers();
     if (p.after) p.after();
+  }
+
+  /*
+   * After a change the page is shown fresh, with its scripts started again.
+   * What the visitor (or the scripts) had changed on the screen, such as an
+   * opened menu or accordion item, stays as it was: otherwise an element
+   * moved into an open menu would seem to vanish when the menu closes again.
+   * Only the view changes, never the saved copy.
+   */
+  var VIEW_ATTRS = ['open', 'hidden', 'aria-expanded', 'aria-hidden', 'aria-selected'];
+
+  function viewClasses(node) {
+    return Array.prototype.filter.call(node.classList, function (c) { return !/^wse-/.test(c); });
+  }
+
+  /* How the page shows each element (classes and the attributes above) once its scripts started. */
+  function viewBase(doc) {
+    var base = {};
+    $$('[' + ID + ']', doc.body).forEach(function (n) {
+      var attrs = {};
+      VIEW_ATTRS.forEach(function (a) { attrs[a] = n.getAttribute(a); });
+      base[n.getAttribute(ID)] = { cls: viewClasses(n), attrs: attrs };
+    });
+    return base;
+  }
+
+  /* The editor changed an attribute in both copies: that is not a change of the view. */
+  function rebase(live, name, value) {
+    var b = state.viewBase && state.viewBase[idOf(live)];
+    if (!b) return;
+    if (name === 'class') b.cls = (value || '').split(/\s+/).filter(function (c) { return c && !/^wse-/.test(c); });
+    else if (VIEW_ATTRS.indexOf(name) >= 0) b.attrs[name] = value === undefined ? null : value;
+  }
+
+  function carryViewState(oldDoc, newDoc, base) {
+    try {
+      if (!base || !oldDoc || !newDoc || oldDoc.location.pathname !== newDoc.location.pathname) return;
+    } catch (e) { return; }
+    var fresh = {};
+    $$('[' + ID + ']', newDoc.body).forEach(function (n) { fresh[n.getAttribute(ID)] = n; });
+    $$('[' + ID + ']', oldDoc.body).forEach(function (old) {
+      var id = old.getAttribute(ID), b = base[id], now = fresh[id];
+      if (!b || !now) return;
+      viewClasses(old).forEach(function (c) {
+        if (b.cls.indexOf(c) < 0) now.classList.add(c);
+      });
+      b.cls.forEach(function (c) {
+        if (!old.classList.contains(c)) now.classList.remove(c);
+      });
+      VIEW_ATTRS.forEach(function (a) {
+        var value = old.getAttribute(a);
+        if (value === b.attrs[a] || value === now.getAttribute(a)) return;
+        if (value === null) now.removeAttribute(a);
+        else now.setAttribute(a, value);
+      });
+    });
   }
 
   function writeStyles() {
@@ -645,6 +740,7 @@
       }
       e.stopPropagation();
       e.preventDefault();
+      if (drag.justDropped) return; // the click that ends a drag keeps the moved element selected
       if (!editingHere(e)) select(selectable(e.target));
     }, true);
     win.addEventListener('dblclick', function (e) {
@@ -686,8 +782,34 @@
     var target = selectable(e.target);
     if (target) {
       e.preventDefault(); // no text selection while dragging; click and double-click still work
-      beginDrag(e, { node: target });
+      beginDrag(e, { node: dragUnit(target) });
     }
+  }
+
+  /*
+   * What a drag picks up: a link that is the only thing in a menu item moves
+   * the whole menu item (and likewise a lone link or image in a paragraph).
+   */
+  var PHRASING = /^(A|SPAN|STRONG|EM|B|I|U|S|SMALL|MARK|CODE|ABBR|TIME|SUB|SUP|IMG|PICTURE|SVG|svg|LABEL|BUTTON)$/;
+
+  /*
+   * What a press on an element drags: a link alone in a list item (or the
+   * link of a menu entry with a submenu) moves the whole entry, the title of
+   * an accordion item moves the whole item.
+   */
+  function dragUnit(node) {
+    for (;;) {
+      var parent = node.parentElement;
+      if (!parent || parent === state.doc.body || !parent.hasAttribute(ID)) break;
+      if (node.tagName === 'SUMMARY' && parent.tagName === 'DETAILS') { node = parent; break; }
+      if (hasText(parent) || !(PHRASING.test(node.tagName) || isInline(node))) break;
+      var others = Array.prototype.filter.call(parent.children, function (c) { return c !== node && c.tagName !== 'SCRIPT'; });
+      var menuEntry = parent.tagName === 'LI' && parent.firstElementChild === node &&
+        others.every(function (c) { return /^(UL|OL)$/.test(c.tagName); });
+      if (others.length && !menuEntry) break;
+      node = parent;
+    }
+    return node;
   }
 
   function onFrameDblClick(e) {
@@ -896,12 +1018,30 @@
     if (!node || !state.doc || !state.doc.contains(node)) return;
     var r = node.getBoundingClientRect();
     var visible = node.getClientRects().length > 0 && r.width * r.height > 0 &&
-      state.win.getComputedStyle(node).visibility !== 'hidden';
+      state.win.getComputedStyle(node).visibility !== 'hidden' && visibleShare(node) > 0.25;
     if (!visible) {
       if (warnIfHidden) toast(t('droppedHidden'), true, { label: t('undo'), run: undo });
       return;
     }
     if (!warnIfHidden && (r.bottom < 0 || r.top > state.win.innerHeight)) node.scrollIntoView({ block: 'center' });
+  }
+
+  /* How much of an element is not cut off by boxes around it that hide overflow (0..1). */
+  function visibleShare(node) {
+    var r = node.getBoundingClientRect();
+    var left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+    for (var n = node.parentElement; n && n !== state.doc.body && n !== state.doc.documentElement; n = n.parentElement) {
+      var cs = state.win.getComputedStyle(n);
+      if (cs.display === 'contents') continue;
+      if (+cs.opacity === 0) return 0;
+      if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+        var c = n.getBoundingClientRect();
+        if (cs.overflowX !== 'visible') { left = Math.max(left, c.left); right = Math.min(right, c.right); }
+        if (cs.overflowY !== 'visible') { top = Math.max(top, c.top); bottom = Math.min(bottom, c.bottom); }
+      }
+    }
+    var area = r.width * r.height;
+    return area ? Math.max(0, right - left) * Math.max(0, bottom - top) / area : 0;
   }
 
   function newStyleClass() {
@@ -1695,6 +1835,7 @@
     if (!drag.active) {
       if (Math.abs(e.screenX - drag.pending.x) + Math.abs(e.screenY - drag.pending.y) < 6) return;
       drag.active = true;
+      drag.topInset = pinnedInset();
       $('#drag-cover').hidden = false;
       document.body.classList.add('dragging');
       state.hovered = null;
@@ -1711,6 +1852,7 @@
       drag.pos = dropPosition(x, y);
     }
     showDropLine(drag.pos);
+    $('#drag-cover').classList.toggle('nodrop', !drag.pos);
     // Outline the box the element will land in.
     state.hovered = drag.pos && drag.pos.parent !== state.doc.body ? drag.pos.parent : null;
   }
@@ -1758,10 +1900,22 @@
     changed(idOf(s), { check: true });
   }
 
+  /* Height of a header that stays on top of the page (it covers the content below it). */
+  function pinnedInset() {
+    var w = state.win.innerWidth, inset = 0;
+    [0.25, 0.5, 0.75].forEach(function (f) {
+      var n = state.doc.elementFromPoint(w * f, 2);
+      var pin = n && pinnedRoot(n);
+      if (pin) inset = Math.max(inset, pin.getBoundingClientRect().bottom);
+    });
+    return Math.min(inset, state.win.innerHeight / 3);
+  }
+
+  /* Scroll the page while dragging near its top or bottom edge. */
   function autoScroll(y, height) {
-    var edge = 40;
-    if (y < edge) state.win.scrollBy(0, -Math.ceil((edge - y) / 2));
-    else if (y > height - edge) state.win.scrollBy(0, Math.ceil((y - height + edge) / 2));
+    var edge = 50, top = (drag.topInset || 0) + edge;
+    if (y < top) state.win.scrollBy(0, -Math.ceil((top - y) / 3));
+    else if (y > height - edge) state.win.scrollBy(0, Math.ceil((y - height + edge) / 3));
   }
 
   /* Lays the children of a container out side by side? */
@@ -1793,13 +1947,66 @@
   };
   var ONLY_TAKES = /^(UL|OL|DL|TABLE|TBODY|THEAD|TFOOT|TR|SELECT|PICTURE)$/;
 
+  // Whole page areas (a section, the header...) do not go into the header, a menu or another section.
+  var AREAS = /^(SECTION|HEADER|FOOTER|MAIN|NAV|ASIDE)$/;
+
   function allowedParent(parent, moving) {
     var tag = moving ? moving.tagName : '';
+    // No link inside a link, only pictures and text styles.
+    if (parent.closest('a, button')) {
+      return !!moving && PHRASING.test(tag) && !/^(A|BUTTON)$/.test(tag) && !moving.querySelector('a, button');
+    }
     if (ONLY_IN[tag]) return ONLY_IN[tag].test(parent.tagName);
+    if (AREAS.test(tag) && !/^(BODY|MAIN|DIV|ARTICLE)$/.test(parent.tagName)) return false;
+    if (tag === 'DETAILS' && parent.tagName === 'DETAILS') return false;
     return !ONLY_TAKES.test(parent.tagName);
   }
 
-  var TEXT_BLOCKS = /^(P|H[1-6]|LI|SUMMARY|BLOCKQUOTE|FIGCAPTION|TD|TH|LABEL|DT|DD|SPAN|A|STRONG|EM|B|I|SMALL)$/;
+  /* On the page, only visible places take a drop: not the content of a closed accordion item. */
+  function pageParent(parent, moving) {
+    if (parent.tagName === 'DETAILS' && !parent.open) return false;
+    return allowedParent(parent, moving);
+  }
+
+  /* The title of an accordion item stays its first child. */
+  function afterSummary(pos) {
+    if (!pos || pos.parent.tagName !== 'DETAILS') return pos;
+    var summary = pos.parent.querySelector(':scope > summary');
+    if (!summary) return pos;
+    for (var n = pos.before; n; n = n.nextSibling) if (n === summary) {
+      return { parent: pos.parent, before: summary.nextSibling, ref: summary, after: true, row: false };
+    }
+    return pos;
+  }
+
+  var TEXT_BLOCKS = /^(P|H[1-6]|LI|SUMMARY|BLOCKQUOTE|FIGCAPTION|TD|TH|LABEL|DT|DD|SPAN|STRONG|EM|B|I|SMALL)$/;
+
+  /* The outermost fixed or sticky box (a header that stays on top) an element is in. */
+  function pinnedRoot(node) {
+    var root = null;
+    for (var n = node; n && n.nodeType === 1 && n !== state.doc.body; n = n.parentElement) {
+      if (/^(fixed|sticky)$/.test(state.win.getComputedStyle(n).position)) root = n;
+    }
+    return root;
+  }
+
+  /*
+   * The element under the pointer that can take a drop. Headers that stay on
+   * top of the page cover the content while dragging; they only take
+   * elements that already are in them.
+   */
+  function targetAt(x, y, moving) {
+    var allowed = moving ? pinnedRoot(moving) : null;
+    var list = state.doc.elementsFromPoint(x, y);
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i];
+      if (n === state.doc.documentElement || n === state.doc.body) return state.doc.body;
+      if (n.closest('[data-wse-hook]')) continue;
+      var pin = pinnedRoot(n);
+      if (!pin || pin === allowed) return n;
+    }
+    return state.doc.body;
+  }
 
   /* An inline element (link, image, bold text...) can be dropped between two words. */
   function textDrop(x, y, moving) {
@@ -1810,9 +2017,19 @@
     var text = range.startContainer;
     var parent = text.parentNode;
     if (!parent || moving.contains(parent) || !TEXT_BLOCKS.test(parent.tagName) || !known(parent)) return null;
-    if (!text.nodeValue.trim() || !shown(parent)) return null;
+    if (!text.nodeValue.trim() || !shown(parent) || parent.closest('a')) return null;
+    if (pinnedRoot(parent) !== pinnedRoot(moving)) return null;
+    // Never split a word: move to the nearest space (or the start or end of the text).
+    var value = text.nodeValue, at = range.startOffset;
+    var left = at, right = at;
+    while (left > 0 && !/\s/.test(value[left - 1])) left--;
+    while (right < value.length && !/\s/.test(value[right])) right++;
+    at = at - left <= right - at ? left : right;
+    range.setStart(text, at);
+    range.collapse(true);
     var rect = range.getBoundingClientRect();
-    return { parent: parent, before: text, split: range.startOffset, caret: rect };
+    if (!rect.height) return null;
+    return { parent: parent, before: text, split: at, caret: rect };
   }
 
   /* Where to drop, as { parent, before } for parent.insertBefore(). */
@@ -1821,26 +2038,25 @@
     var moving = drag.pending.what.node || null;
     var inText = textDrop(x, y, moving);
     if (inText) return inText;
-    var target = doc.elementFromPoint(x, y) || doc.body;
-    if (target === doc.documentElement) target = doc.body;
+    var target = targetAt(x, y, moving);
     // Never drop an element into itself.
     if (moving && moving.contains(target)) target = moving;
     var node = target;
     while (node && node !== doc.body) {
       if (known(node) && shown(node) && node !== moving) {
-        if (CONTAINERS.test(node.tagName) && allowedParent(node, moving)) {
+        if (CONTAINERS.test(node.tagName) && pageParent(node, moving)) {
           var r = node.getBoundingClientRect();
           var inner = Math.min(16, r.width / 4, r.height / 4);
           var inside = x > r.left + inner && x < r.right - inner && y > r.top + inner && y < r.bottom - inner;
-          if (inside) return positionAmong(node, x, y, moving);
+          if (inside) return afterSummary(positionAmong(node, x, y, moving));
         }
         var parent = node.parentElement;
-        if (parent && known(parent) && parent !== moving && allowedParent(parent, moving)) {
+        if (parent && known(parent) && parent !== moving && pageParent(parent, moving)) {
           // Near the edge of an element: before or after it.
           var pr = node.getBoundingClientRect();
           var row = isRow(parent);
           var after = row ? x > pr.left + pr.width / 2 : y > pr.top + pr.height / 2;
-          return { parent: parent, before: after ? node.nextSibling : node, ref: node, after: after, row: row };
+          return afterSummary({ parent: parent, before: after ? node.nextSibling : node, ref: node, after: after, row: row });
         }
       }
       node = node.parentElement;
@@ -2137,7 +2353,7 @@
     body = stripIds(body);
     // Whitespace after </body> ends up inside <body> when the browser reads it; put it back.
     body = body.replace(/\s+$/, '') + state.bodyTrail;
-    return headWithStyles(state.prefix, css) + restoreScripts(bareAttributes(keepEntities(body))) + state.suffix;
+    return headWithStyles(state.prefix, css) + restoreScripts(keepTagLayout(bareAttributes(keepEntities(body)))) + state.suffix;
   }
 
   function save() {
@@ -2248,7 +2464,7 @@
 
   // For automated tests.
   window.WSE = {
-    state: state, buildOutput: buildOutput, save: save, select: select, act: act, setStyle: setStyle,
+    state: state, drag: drag, buildOutput: buildOutput, save: save, select: select, act: act, setStyle: setStyle,
     liveById: liveById, undo: undo, redo: redo, setInteract: setInteract,
     ready: function () { return !!state.doc && state.shownSeq === renderSeq; }
   };

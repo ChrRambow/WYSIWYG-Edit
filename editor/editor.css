@@ -245,6 +245,7 @@ input::placeholder { color: var(--muted); }
 .tb-sep { width: 1px; height: 16px; background: rgba(255,255,255,.18); margin: 0 3px; }
 
 .drag-cover { position: absolute; inset: 0; z-index: 4; cursor: grabbing; }
+.drag-cover.nodrop { cursor: not-allowed; }
 .drop-line { position: absolute; background: var(--accent); border-radius: 3px; pointer-events: none; box-shadow: 0 0 0 2px rgba(255,255,255,.9), 0 2px 10px rgba(79,70,229,.5); }
 .drop-line.fill { background: rgba(99, 102, 241, .12); outline: 2px dashed var(--accent); box-shadow: none; }
 body.dragging, body.dragging * { cursor: grabbing !important; user-select: none; }
