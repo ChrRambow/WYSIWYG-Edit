@@ -190,6 +190,13 @@
     <footer><div class="spacer"></div><button class="btn primary" data-close data-i18n="close"></button></footer>
   </dialog>
 
+  <dialog id="shared-dialog" class="dialog small">
+    <header><h2 data-i18n="sharedTitle"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
+    <p data-i18n="sharedText"></p>
+    <div id="shared-list" class="shared-list"></div>
+    <footer><div class="spacer"></div><button class="btn ghost" id="shared-here" data-i18n="sharedHere"></button><button class="btn primary" id="shared-all" data-i18n="sharedAll"></button></footer>
+  </dialog>
+
   <div id="toast" class="toast" hidden><span id="toast-text"></span><button id="toast-action" class="toast-action" hidden></button></div>
 
   <script src="/app/styles.js"></script>

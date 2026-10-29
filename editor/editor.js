@@ -395,6 +395,7 @@
       state.savedKey = currentKey();
       updateDirty();
       render();
+      findShared();
     }).catch(fail);
   }
 
@@ -951,6 +952,8 @@
       nav.appendChild(el('button', { 'class': 'crumb' + (n === state.selected ? ' current' : ''), text: label(n), onclick: function () { select(n); } }));
     });
     if (!chain.length) nav.appendChild(el('span', { 'class': 'hint', text: t('crumbsHint') }));
+    var part = state.selected && sharedPartOf(state.selected);
+    if (part) nav.appendChild(el('span', { 'class': 'shared-chip', title: t('sharedHint'), text: t('sharedChip', { n: part.pages.length }) }));
   }
 
   function renderPanels() {
@@ -2291,6 +2294,238 @@
     if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
   });
 
+  // ------------------------------------------------------------ parts shared by several pages
+
+  /*
+   * A website repeats its header, menu and footer on every page. Parts that
+   * are the same on other pages are found when a page opens. When such a
+   * part is changed here, saving offers to make the change on those pages
+   * too. What marks the current page (aria-current="page", a class like
+   * "current" or "active") stays as it was on each page.
+   */
+  var SHARED_TAGS = /^(HEADER|FOOTER|NAV|ASIDE)$/;
+  var SHARED_NAMES = /(^|[-_\s])(header|footer|nav|navbar|navigation|menu|topbar|sidebar)([-_\s]|$)/i;
+  var MARK_CLASS = /^(current|active|is-active|is-current|selected|current-menu-item|current_page_item|current-menu-parent|current-menu-ancestor|current-page-ancestor)$/;
+  var sharedSeq = 0;
+
+  function sharedCandidate(n) {
+    return SHARED_TAGS.test(n.tagName) ||
+      (/^(DIV|UL)$/.test(n.tagName) && SHARED_NAMES.test((n.id || '') + ' ' + (n.getAttribute('class') || '')));
+  }
+
+  function partKey(n) {
+    var classes = Array.prototype.filter.call(n.classList, function (c) { return !MARK_CLASS.test(c) && !/^wse-/.test(c); });
+    return n.tagName + '#' + (n.id || '') + '.' + classes.sort().join('.');
+  }
+
+  function unmark(n) {
+    [n].concat($$('*', n)).forEach(function (e) {
+      e.removeAttribute(ID);
+      e.removeAttribute('aria-current');
+      Array.prototype.slice.call(e.classList).forEach(function (c) { if (MARK_CLASS.test(c)) e.classList.remove(c); });
+      if (e.hasAttribute('class') && !e.classList.length) e.removeAttribute('class');
+    });
+    return n;
+  }
+
+  /* A part as text, without the marks of its page and with spaces made equal. */
+  function partText(n) {
+    return unmark(n.cloneNode(true)).outerHTML.replace(/\s+/g, ' ');
+  }
+
+  function candidatesIn(root) {
+    var map = {};
+    $$('*', root).forEach(function (n) {
+      if (!sharedCandidate(n)) return;
+      var key = partKey(n);
+      (map[key] = map[key] || []).push(n);
+    });
+    return map;
+  }
+
+  /* Look at the other pages of the site (after a page opened). */
+  function findShared() {
+    var seq = ++sharedSeq, page = state.page;
+    state.shared = [];
+    var own = candidatesIn(state.src.body);
+    var others = (state.site.pages || []).filter(function (p) { return p !== page; }).slice(0, 300);
+    var found = {};
+    var next = function (i) {
+      if (seq !== sharedSeq) return null;
+      if (i >= others.length) return finish();
+      return api('/api/page?path=' + encodeURIComponent(others[i])).then(function (data) {
+        if (seq !== sharedSeq) return;
+        var doc = new DOMParser().parseFromString(data.source, 'text/html');
+        var theirs = candidatesIn(doc.body);
+        Object.keys(own).forEach(function (key) {
+          if (own[key].length !== 1 || !theirs[key] || theirs[key].length !== 1) return;
+          if (partText(theirs[key][0]) !== partText(own[key][0])) return;
+          (found[key] = found[key] || []).push(others[i]);
+        });
+      }, function () { /* a page that cannot be read is left out */ }).then(function () { return next(i + 1); });
+    };
+    var finish = function () {
+      Object.keys(found).forEach(function (key) {
+        var n = own[key][0];
+        // A part inside a shared part goes with it.
+        for (var p = n.parentElement; p; p = p.parentElement) {
+          if (p.hasAttribute(ID) && found[partKey(p)] && own[partKey(p)] && own[partKey(p)][0] === p) return;
+        }
+        state.shared.push({ id: n.getAttribute(ID), key: key, tag: n.tagName, pages: found[key], text: partText(n) });
+      });
+      renderCrumbs();
+    };
+    return next(0);
+  }
+
+  function sharedPartOf(node) {
+    var parts = state.shared || [];
+    for (var n = node; n && n.nodeType === 1; n = n.parentElement) {
+      var id = idOf(n);
+      for (var i = 0; i < parts.length; i++) if (parts[i].id === id && parts[i].pages.length) return parts[i];
+    }
+    return null;
+  }
+
+  function changedParts() {
+    return (state.shared || []).filter(function (part) {
+      var n = srcById(part.id);
+      return n && part.pages.length && partText(n) !== part.text;
+    });
+  }
+
+  /* Ask which changed parts go to the other pages. Resolves with the chosen parts (or none). */
+  function askShared(parts) {
+    return new Promise(function (resolve) {
+      var dialog = $('#shared-dialog'), list = $('#shared-list');
+      list.innerHTML = '';
+      var boxes = parts.map(function (part) {
+        var box = el('input', { type: 'checkbox', checked: true });
+        list.appendChild(el('label', { 'class': 'check' }, [box, el('span', {
+          text: t('sharedPart', { name: label(liveById(part.id) || srcById(part.id)), n: part.pages.length })
+        })]));
+        return box;
+      });
+      var done = function (choice) {
+        dialog.onclose = null;
+        dialog.close();
+        resolve(choice);
+      };
+      $('#shared-all').onclick = function () {
+        done(parts.filter(function (p, i) { return boxes[i].checked; }).concat(
+          parts.filter(function (p, i) { return !boxes[i].checked; }).map(function (p) { return { only: p }; })));
+      };
+      $('#shared-here').onclick = function () { done(parts.map(function (p) { return { only: p }; })); };
+      dialog.onclose = function () { resolve([]); };
+      dialog.showModal();
+    });
+  }
+
+  /* Where a part starts and ends in the text of another page. */
+  function partRange(source, part) {
+    var re = /<!--[\s\S]*?-->|<(script|style|textarea|title)\b[^>]*>[\s\S]*?<\/\1\s*>|<(\/?)([a-zA-Z][\w-]*)((?:\s+[^\s="'\/>]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*\/?>/g;
+    var name = part.tag.toLowerCase(), start = -1, depth = 0, m;
+    while ((m = re.exec(source))) {
+      if (!m[3] || m[3].toLowerCase() !== name) continue;
+      if (start < 0) {
+        if (m[2]) continue;
+        var tag = new DOMParser().parseFromString('<body>' + m[0], 'text/html').body.firstElementChild;
+        if (tag && partKey(tag) === part.key) { start = m.index; depth = 1; }
+      } else {
+        depth += m[2] ? -1 : 1;
+        if (!depth) return [start, m.index + m[0].length];
+      }
+    }
+    return null;
+  }
+
+  /* The changed part for another page, with that page's marks. */
+  function partFor(part, theirs) {
+    // An element is found again by its link (address and text), else by its text.
+    var sig = function (e, loose) {
+      var link = e.getAttribute('href') !== null ? e : e.querySelector(':scope > a[href]');
+      var text = (link || e).textContent.replace(/\s+/g, ' ').trim().slice(0, 60);
+      return e.tagName + '|' + (link ? link.getAttribute('href') : '') + '|' + (loose && link ? '' : text);
+    };
+    var copy = unmark(srcById(part.id).cloneNode(true));
+    var all = [copy].concat($$('*', copy));
+    var find = function (e) {
+      var exact = all.filter(function (c) { return sig(c) === sig(e); });
+      if (exact.length) return exact[0];
+      var loose = all.filter(function (c) { return sig(c, true) === sig(e, true); });
+      return loose.length === 1 ? loose[0] : null; // the link text was changed
+    };
+    [theirs].concat($$('*', theirs)).forEach(function (e) {
+      var marks = Array.prototype.filter.call(e.classList, function (c) { return MARK_CLASS.test(c); });
+      var current = e.getAttribute('aria-current');
+      if (!marks.length && current === null) return;
+      var match = find(e);
+      if (!match) return;
+      marks.forEach(function (c) { match.classList.add(c); });
+      if (current !== null) match.setAttribute('aria-current', current);
+    });
+    return copy;
+  }
+
+  /* Copy the editor's styles of a part's elements into another page's style block. */
+  function withPartStyles(source, copy) {
+    var used = {};
+    [copy].concat($$('*', copy)).forEach(function (e) {
+      Array.prototype.forEach.call(e.classList, function (c) { if (/^wse-/.test(c)) used['.' + c] = true; });
+    });
+    var sels = Object.keys(used).filter(function (sel) { return state.model.rules[sel]; });
+    if (!sels.length) return source;
+    var bodyAt = source.search(/<body\b/i);
+    if (bodyAt < 0) return source;
+    var head = source.slice(0, bodyAt);
+    var block = /<style\b[^>]*\bid\s*=\s*["']?wysiwyg-edit-styles\b[^>]*>([\s\S]*?)<\/style\s*>/i.exec(head);
+    var model = S.parse(block ? block[1] : '');
+    sels.forEach(function (sel) {
+      model.rules[sel] = JSON.parse(JSON.stringify(state.model.rules[sel]));
+      if (model.order.indexOf(sel) < 0) model.order.push(sel);
+    });
+    return headWithStyles(head, S.serialize(model)) + source.slice(bodyAt);
+  }
+
+  function shareToPage(page, parts) {
+    return api('/api/page?path=' + encodeURIComponent(page)).then(function (data) {
+      var source = data.source;
+      var doc = new DOMParser().parseFromString(source, 'text/html');
+      var theirs = candidatesIn(doc.body);
+      var changed = false;
+      parts.forEach(function (part) {
+        if (part.pages.indexOf(page) < 0 || !theirs[part.key] || theirs[part.key].length !== 1) return;
+        if (partText(theirs[part.key][0]) !== part.text) return; // changed there in the meantime
+        var range = partRange(source, part);
+        if (!range) return;
+        var copy = partFor(part, theirs[part.key][0]);
+        var html = restoreScripts(keepTagLayout(bareAttributes(keepEntities(stripIds(copy.outerHTML)))));
+        source = withPartStyles(source.slice(0, range[0]) + html + source.slice(range[1]), copy);
+        changed = true;
+      });
+      return changed ? api('/api/save', { path: page, content: source }).then(function () { return 1; }) : 0;
+    });
+  }
+
+  /* After saving this page: offer the changes of shared parts to the other pages. */
+  function saveShared() {
+    var parts = changedParts();
+    if (!parts.length) return Promise.resolve(0);
+    return askShared(parts).then(function (choice) {
+      var go = choice.filter(function (c) { return !c.only; });
+      choice.forEach(function (c) { if (c.only) c.only.pages = []; }); // differs from the other pages now
+      var pages = {};
+      go.forEach(function (part) { part.pages.forEach(function (p) { pages[p] = true; }); });
+      var count = 0;
+      return Object.keys(pages).reduce(function (chain, page) {
+        return chain.then(function () { return shareToPage(page, go); }).then(function (n) { count += n; });
+      }, Promise.resolve()).then(function () {
+        go.forEach(function (part) { part.text = partText(srcById(part.id)); });
+        return count;
+      });
+    });
+  }
+
   // ------------------------------------------------------------ saving
 
   var PLACEHOLDER_RE = /<script type="text\/x-wse-off" data-wse-idx="(\d+)"><\/script>/g;
@@ -2366,6 +2601,10 @@
       state.savedKey = key;
       updateDirty();
       toast(res.backup ? t('savedTo', { path: res.backup }) : t('saved') + ' ✓');
+      return saveShared().then(function (count) {
+        if (count) toast(t('sharedDone', { n: count }) + ' ✓');
+        renderCrumbs();
+      });
     }).catch(fail).then(function () { label.textContent = t('save'); });
   }
 

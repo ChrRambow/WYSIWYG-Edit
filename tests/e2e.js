@@ -57,6 +57,7 @@ async function waitForServer() {
   fs.writeFileSync(path.join(site, 'after-body.js'), '');
   fs.copyFileSync(path.join(__dirname, 'fixtures', 'fixed-header.html'), path.join(site, 'fixed-header.html'));
   fs.copyFileSync(path.join(__dirname, 'fixtures', 'menu-accordion.html'), path.join(site, 'menu-accordion.html'));
+  fs.copyFileSync(path.join(__dirname, 'fixtures', 'menu-page2.html'), path.join(site, 'menu-page2.html'));
   const originalIndex = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
 
   const server = spawn('python3', [path.join(ROOT, 'server.py'), site, '--port', String(PORT), '--no-browser'],
@@ -350,7 +351,22 @@ async function waitForServer() {
     assert.strictEqual(await menu(), 'Team+,Leistungen,Über uns+,Praxisräume', 'keyboard undo works after a change');
     await page.click('.device[data-device="desktop"]');
     await settle();
-    await live(() => WSE.save());
+    // The menu is the same on another page: saving offers to change it there too.
+    await live(() => WSE.select(WSE.state.doc.querySelector('#nav li')));
+    assert.match(await page.locator('#crumbs .shared-chip').innerText(), /1/, 'shared part is shown');
+    await page.click('#btn-save');
+    await page.waitForSelector('#shared-dialog[open]');
+    await page.click('#shared-all');
+    await page.waitForFunction(() => !document.querySelector('#shared-dialog').open);
+    await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
+    await sleep(500);
+    const page2 = fs.readFileSync(path.join(site, 'menu-page2.html'), 'utf8');
+    const original2 = fs.readFileSync(path.join(__dirname, 'fixtures', 'menu-page2.html'), 'utf8');
+    assert.ok(/Team<\/a>[\s\S]*Leistungen<\/a>[\s\S]*Über uns<\/a>[\s\S]*Praxisräume<\/a>/.test(page2), 'menu changed on the other page');
+    assert.ok(page2.includes('<li class="has-sub current"><a href="#">Team</a>'), 'the other page keeps its current entry');
+    assert.ok(page2.includes('<li><a href="#" aria-current="page">Mitarbeiter</a></li>'));
+    assert.strictEqual(page2.slice(page2.indexOf('</header>')), original2.slice(original2.indexOf('</header>')), 'rest of the page unchanged');
+    assert.strictEqual(page2.slice(0, page2.indexOf('<header>')), original2.slice(0, original2.indexOf('<header>')));
     const menuSaved = fs.readFileSync(path.join(site, 'menu-accordion.html'), 'utf8');
     assert.ok(!/main-menu open|<details open>\s*<summary>Nachhaltigkeit/.test(menuSaved), 'opened things are not saved open');
     assert.match(menuSaved, /<summary>Prophylaxe<\/summary>[\s\S]*<summary>Nachhaltigkeit<\/summary>/);

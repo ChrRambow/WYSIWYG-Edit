@@ -262,6 +262,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; user-select: none;
 .crumb.current { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
 .crumb-sep { color: var(--muted); display: inline-flex; }
 .crumb-sep .ic { width: 12px; height: 12px; }
+.shared-chip { margin-left: 10px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.shared-list { display: grid; gap: 8px; margin: 4px 0 14px; padding: 0 18px; }
+.shared-list .check { display: flex; gap: 8px; align-items: center; font-weight: 500; }
 .status-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .status-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
 .status-chip.interact { color: var(--ok); font-weight: 600; }
