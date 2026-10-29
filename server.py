@@ -22,7 +22,7 @@ import threading
 import urllib.parse
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 APP_DIR = Path(__file__).resolve().parent / "editor"
 CONFIG_DIR = Path.home() / ".wysiwyg-edit"
@@ -31,6 +31,8 @@ RECENT_FILE = CONFIG_DIR / "recent.json"
 
 HTML_EXT = {".html", ".htm"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".ico"}
+SAVE_EXT = HTML_EXT | {".css"}
+NEW_SITE_EXT = {".html", ".css", ".js", ".svg", ".txt", ".json"}
 SKIP_DIRS = {".git", "node_modules", ".wysiwyg-edit", "__pycache__"}
 MAX_UPLOAD = 50 * 1024 * 1024
 
@@ -144,15 +146,93 @@ def open_folder(folder):
     return folder
 
 
-def choose_folder_dialog():
+def choose_folder_dialog(prompt="Choose the folder of your website"):
     """Show the native macOS folder picker. Returns None if cancelled."""
     if sys.platform != "darwin":
         raise RuntimeError("The folder dialog is only available on macOS. Please type the path.")
-    script = 'POSIX path of (choose folder with prompt "Choose the folder of your website")'
+    script = 'POSIX path of (choose folder with prompt "%s")' % prompt.replace('"', "'")
     result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     if result.returncode != 0:
         return None
     return result.stdout.strip()
+
+
+def default_parent():
+    """Where new websites go unless the user picks another folder."""
+    docs = Path.home() / "Documents"
+    return str((docs if docs.is_dir() else Path.home()) / "Websites")
+
+
+def create_site(parent, name, files):
+    """Write the files of a new website into parent/name and open it."""
+    name = (name or "").strip()
+    if not name or name in (".", "..") or re.search(r"[/\\:\x00]", name):
+        raise ValueError("Please choose a name without / or :")
+    folder = (Path(parent or default_parent()).expanduser() / name).resolve()
+    if folder.exists() and (not folder.is_dir() or any(folder.iterdir())):
+        raise ValueError("The folder %s already exists and is not empty" % folder)
+    checked = []
+    for item in files or []:
+        rel = PurePosixPath(str(item.get("path", "")))
+        content = item.get("content")
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts or not isinstance(content, str):
+            raise ValueError("Invalid file in the new website: %s" % rel)
+        if rel.suffix.lower() not in NEW_SITE_EXT:
+            raise ValueError("Unexpected file type in the new website: %s" % rel)
+        checked.append((rel, content))
+    if not any(rel.suffix.lower() in HTML_EXT for rel, _ in checked):
+        raise ValueError("A website needs at least one page")
+    for rel, content in checked:
+        target = folder.joinpath(*rel.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content.encode("utf-8"))
+    return open_folder(folder)
+
+
+def write_keeping_encoding(target, content):
+    """Write a site file in the encoding it had, after a backup (once per session)."""
+    encoding = read_text(target)[1] if target.exists() else "utf-8"
+    backup_path = None
+    if target.exists() and target not in STATE.backed_up:
+        backup_path = backup(target)
+        STATE.backed_up.add(target)
+    tmp = target.with_name(target.name + ".wse-tmp")
+    # Keep the file's original encoding (older sites may use Windows-1252).
+    tmp.write_bytes(content.encode(encoding, "xmlcharrefreplace"))
+    os.replace(tmp, target)
+    return backup_path
+
+
+def html_page(rel, must_exist):
+    target = safe_path(rel)
+    if target.suffix.lower() not in HTML_EXT:
+        raise ValueError("Pages end in .html")
+    if must_exist and not target.is_file():
+        raise FileNotFoundError(rel)
+    if not must_exist and target.exists():
+        raise ValueError("A page with this name already exists: %s" % rel)
+    return target
+
+
+def rename_page(old, new):
+    """Rename a page and change the links to it on every page of the site."""
+    source, target = html_page(old, True), html_page(new, False)
+    backup(source)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(source, target)
+    STATE.backed_up.discard(source)
+    changed = 0
+    for rel in list_site()[0]:
+        page = STATE.root / rel
+        text, _ = read_text(page)
+        old_link = Path(os.path.relpath(source, page.parent)).as_posix()
+        new_link = Path(os.path.relpath(target, page.parent)).as_posix()
+        pattern = re.compile(r"(\bhref\s*=\s*([\"']))(?:\./)?%s(?=[#?\"'])" % re.escape(old_link), re.I)
+        updated = pattern.sub(lambda m: m.group(1) + new_link, text)
+        if updated != text:
+            write_keeping_encoding(page, updated)
+            changed += 1
+    return changed
 
 
 def lan_ip():
@@ -282,6 +362,31 @@ class EditorHandler(SimpleHTTPRequestHandler):
                     return self.send_json({"cancelled": True})
                 open_folder(path)
                 return self.api_state()
+            if url.path == "/api/pick-folder":
+                path = choose_folder_dialog("Where should the new website be saved?")
+                return self.send_json({"cancelled": True} if not path else {"path": path})
+            if url.path == "/api/create-site":
+                data = self.read_json()
+                create_site(data.get("parent"), data.get("name"), data.get("files"))
+                return self.api_state()
+            if url.path == "/api/create-page":
+                data = self.read_json()
+                if not isinstance(data.get("content"), str):
+                    raise ValueError("Missing content")
+                target = html_page(data.get("path", ""), False)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data["content"].encode("utf-8"))
+                return self.api_state()
+            if url.path == "/api/delete-page":
+                target = html_page(self.read_json().get("path", ""), True)
+                backup_path = backup(target)
+                target.unlink()
+                STATE.renders.pop(target, None)
+                return self.send_json({"ok": True, "backup": backup_path})
+            if url.path == "/api/rename-page":
+                data = self.read_json()
+                changed = rename_page(data.get("from", ""), data.get("to", ""))
+                return self.send_json({"ok": True, "changed": changed})
             if url.path == "/api/save":
                 return self.api_save(self.read_json())
             if url.path == "/api/render":
@@ -323,7 +428,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
     # -- api
 
     def api_state(self):
-        data = {"root": None, "recent": load_recent(), "platform": sys.platform}
+        data = {"root": None, "recent": load_recent(), "platform": sys.platform, "defaultParent": default_parent()}
         if STATE.root is not None:
             pages, images = list_site()
             data.update(root=str(STATE.root), name=STATE.root.name, pages=pages, images=images)
@@ -340,20 +445,12 @@ class EditorHandler(SimpleHTTPRequestHandler):
 
     def api_save(self, data):
         target = safe_path(data.get("path", ""))
-        if target.suffix.lower() not in HTML_EXT:
-            raise ValueError("Only HTML pages can be saved")
+        if target.suffix.lower() not in SAVE_EXT:
+            raise ValueError("Only HTML pages and CSS files can be saved")
         content = data.get("content")
         if not isinstance(content, str):
             raise ValueError("Missing content")
-        encoding = read_text(target)[1] if target.exists() else "utf-8"
-        backup_path = None
-        if target not in STATE.backed_up:
-            backup_path = backup(target)
-            STATE.backed_up.add(target)
-        tmp = target.with_name(target.name + ".wse-tmp")
-        # Keep the file's original encoding (older sites may use Windows-1252).
-        tmp.write_bytes(content.encode(encoding, "xmlcharrefreplace"))
-        os.replace(tmp, target)
+        backup_path = write_keeping_encoding(target, content)
         return self.send_json({"ok": True, "backup": backup_path})
 
     def api_upload(self, query):

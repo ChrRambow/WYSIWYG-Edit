@@ -309,6 +309,7 @@
 
   function showStart(error) {
     $('#app').hidden = true;
+    $('#new-site').hidden = true;
     $('#start').hidden = false;
     var err = $('#start-error');
     err.hidden = !error;
@@ -322,7 +323,7 @@
           [icon('folder'), el('b', { text: name }), el('span', { text: path })])]));
       });
       $('#recent-wrap').hidden = !(data.recent || []).length;
-      $('#choose-folder').hidden = data.platform !== 'darwin';
+      state.platform = data.platform;
     }).catch(fail);
   }
 
@@ -331,6 +332,7 @@
   }
 
   $('#choose-folder').addEventListener('click', function () {
+    if (state.platform !== 'darwin') { $('#path-input').focus(); return; } // the folder dialog needs macOS
     api('/api/choose-folder', {}).then(function (data) {
       if (!data.cancelled) openSite(data);
     }, function (e) { showStart(e.message); });
@@ -351,11 +353,10 @@
   function openSite(data) {
     state.site = data;
     $('#start').hidden = true;
+    $('#new-site').hidden = true;
     $('#app').hidden = false;
     $('#site-name').textContent = data.name;
-    var select = $('#page-select');
-    select.innerHTML = '';
-    data.pages.forEach(function (p) { select.appendChild(el('option', { value: p, text: p })); });
+    fillPages(data);
     if (!data.pages.length) {
       showStart(data.root + ': no .html files');
       return;
@@ -363,9 +364,159 @@
     loadPage(data.pages[0]);
   }
 
+  function fillPages(data) {
+    var select = $('#page-select');
+    select.innerHTML = '';
+    data.pages.forEach(function (p) { select.appendChild(el('option', { value: p, text: p })); });
+    if (state.page) select.value = state.page;
+  }
+
   function refreshSite() {
     return api('/api/state').then(function (data) { state.site = data; return data; });
   }
+
+  // ------------------------------------------------------------ a new website
+
+  var NS = { template: 'business', color: WSETemplates.PALETTES[0].color, font: 'modern', width: 1280 };
+  var nsTimer = null;
+
+  /* Little pictures of the templates (120 x 80). */
+  var TPL_THUMBS = {
+    business: '<rect x="0" y="0" width="120" height="10" class="o"/><rect x="6" y="3" width="18" height="4" rx="2" class="f"/>' +
+      '<rect x="8" y="18" width="46" height="7" rx="2" class="f"/><rect x="8" y="29" width="40" height="3" rx="1.5"/><rect x="8" y="35" width="34" height="3" rx="1.5"/>' +
+      '<rect x="8" y="43" width="20" height="7" rx="3.5" class="f"/><rect x="66" y="16" width="46" height="34" rx="5" class="o"/>' +
+      '<rect x="8" y="58" width="32" height="18" rx="3" class="o"/><rect x="44" y="58" width="32" height="18" rx="3" class="o"/><rect x="80" y="58" width="32" height="18" rx="3" class="o"/>',
+    personal: '<rect x="0" y="0" width="120" height="10" class="o"/><rect x="6" y="3" width="18" height="4" rx="2" class="f"/>' +
+      '<rect x="8" y="17" width="40" height="7" rx="2" class="f"/><rect x="8" y="28" width="46" height="3" rx="1.5"/><rect x="8" y="35" width="20" height="7" rx="3.5" class="f"/>' +
+      '<rect x="66" y="15" width="46" height="30" rx="5" class="o"/>' +
+      '<rect x="8" y="52" width="32" height="24" rx="3" class="o"/><rect x="44" y="52" width="32" height="24" rx="3" class="o"/><rect x="80" y="52" width="32" height="24" rx="3" class="o"/>',
+    blank: '<rect x="0" y="0" width="120" height="10" class="o"/><rect x="6" y="3" width="18" height="4" rx="2" class="f"/>' +
+      '<rect x="30" y="28" width="60" height="7" rx="2" class="f"/><rect x="36" y="40" width="48" height="3" rx="1.5"/>' +
+      '<rect x="0" y="66" width="120" height="14" class="o"/>'
+  };
+
+  function nsLang() {
+    return window.WSE_LANG === 'de' ? 'de' : 'en';
+  }
+
+  function showNewSite() {
+    $('#start').hidden = true;
+    $('#new-site').hidden = false;
+    $('#ns-error').hidden = true;
+    var name = $('#ns-name');
+    if (!name.value) name.value = t('nsNameDefault');
+    api('/api/state').then(function (data) {
+      state.platform = data.platform;
+      if (!$('#ns-parent').value) $('#ns-parent').value = data.defaultParent || '';
+      $('#ns-pick').hidden = data.platform !== 'darwin';
+      nsNote();
+    }).catch(fail);
+    renderNewSite();
+    nsPreview();
+    name.focus();
+    name.select();
+  }
+
+  function renderNewSite() {
+    var tpls = $('#ns-templates');
+    tpls.innerHTML = '';
+    WSETemplates.TEMPLATES.forEach(function (id) {
+      tpls.appendChild(el('button', {
+        type: 'button', 'class': 'ns-template' + (NS.template === id ? ' active' : ''), 'data-template': id,
+        onclick: function () { NS.template = id; renderNewSite(); nsPreview(); }
+      }, [el('span', { 'class': 'ns-tpl-thumb', html: '<svg viewBox="0 0 120 80">' + TPL_THUMBS[id] + '</svg>' }),
+        el('b', { text: t('tpl_' + id) }), el('span', { text: t('tpl_' + id + '_hint') })]));
+    });
+    var colors = $('#ns-colors');
+    colors.innerHTML = '';
+    var known = false;
+    WSETemplates.PALETTES.forEach(function (p) {
+      if (p.color === NS.color) known = true;
+      colors.appendChild(el('button', {
+        type: 'button', 'class': 'swatch' + (NS.color === p.color ? ' active' : ''), style: 'background:' + p.color, title: p.color,
+        onclick: function () { NS.color = p.color; renderNewSite(); nsPreview(); }
+      }));
+    });
+    var custom = el('input', { type: 'color', value: NS.color, title: t('nsCustomColor'), 'class': 'swatch-input' + (known ? '' : ' active') });
+    custom.addEventListener('input', function () { NS.color = custom.value; nsPreview(); });
+    custom.addEventListener('change', function () { renderNewSite(); });
+    colors.appendChild(el('label', { 'class': 'swatch-custom', title: t('nsCustomColor') }, [custom, el('span', { text: t('nsCustomColor') })]));
+    var fonts = $('#ns-fonts');
+    fonts.innerHTML = '';
+    WSETemplates.FONTS.forEach(function (f) {
+      fonts.appendChild(el('button', {
+        type: 'button', 'class': 'ns-font' + (NS.font === f.id ? ' active' : ''),
+        onclick: function () { NS.font = f.id; renderNewSite(); nsPreview(); }
+      }, [el('span', { 'class': 'ns-font-sample', style: 'font-family:' + f.heading, text: 'Aa' }), el('span', { text: t('font_' + f.id) })]));
+    });
+  }
+
+  function nsOptions() {
+    return { template: NS.template, name: $('#ns-name').value.trim() || t('nsNameDefault'), lang: nsLang(), color: NS.color, font: NS.font };
+  }
+
+  function nsPreview() {
+    clearTimeout(nsTimer);
+    nsTimer = setTimeout(function () {
+      $('#ns-frame').srcdoc = WSETemplates.preview(nsOptions());
+      nsScale();
+    }, 120);
+  }
+
+  function nsScale() {
+    var stage = $('#ns-stage'), frame = $('#ns-frame');
+    var scale = Math.min(1, (stage.clientWidth - 2) / NS.width);
+    frame.style.width = NS.width + 'px';
+    frame.style.height = Math.ceil(stage.clientHeight / scale) + 'px';
+    frame.style.transform = 'scale(' + scale + ')';
+    frame.style.left = Math.max(0, (stage.clientWidth - NS.width * scale) / 2) + 'px';
+  }
+
+  function nsNote() {
+    var parent = $('#ns-parent').value.trim().replace(/[\/\\]+$/, '');
+    var name = $('#ns-name').value.trim();
+    $('#ns-folder-note').textContent = parent && name ? t('nsFolderNote', { path: parent + '/' + name }) : '';
+  }
+
+  $('#btn-new-site').addEventListener('click', showNewSite);
+  $('#ns-back').addEventListener('click', function () { showStart(); });
+  $('#ns-name').addEventListener('input', function () { nsNote(); nsPreview(); });
+  $('#ns-parent').addEventListener('input', nsNote);
+  $('#ns-pick').addEventListener('click', function () {
+    api('/api/pick-folder', {}).then(function (data) {
+      if (data.path) { $('#ns-parent').value = data.path; nsNote(); }
+    }).catch(fail);
+  });
+  $$('.ns-device').forEach(function (b) {
+    b.addEventListener('click', function () {
+      NS.width = +b.getAttribute('data-width');
+      $$('.ns-device').forEach(function (x) { x.classList.toggle('active', x === b); });
+      nsScale();
+    });
+  });
+  window.addEventListener('resize', function () { if (!$('#new-site').hidden) nsScale(); });
+
+  $('#ns-create').addEventListener('click', function () {
+    var name = $('#ns-name').value.trim();
+    var error = $('#ns-error');
+    error.hidden = true;
+    if (!name) { $('#ns-name').focus(); return; }
+    var button = $('#ns-create'), label = button.querySelector('span');
+    button.disabled = true;
+    label.textContent = t('nsCreating');
+    var options = nsOptions();
+    options.name = name;
+    api('/api/create-site', { parent: $('#ns-parent').value.trim(), name: name, files: WSETemplates.build(options) }).then(function (data) {
+      $('#ns-name').value = '';
+      openSite(data);
+    }, function (e) {
+      error.textContent = t('error', { msg: e.message });
+      error.hidden = false;
+    }).then(function () {
+      button.disabled = false;
+      label.textContent = t('nsCreate');
+    });
+  });
 
   $('#page-select').addEventListener('change', function (e) {
     if (isDirty() && !confirm(t('unsavedSwitch'))) {
@@ -396,6 +547,7 @@
       updateDirty();
       render();
       findShared();
+      loadDesign();
     }).catch(fail);
   }
 
@@ -605,6 +757,7 @@
     if (oldWin) {
       try { win.scrollTo({ left: oldWin.scrollX, top: oldWin.scrollY, behavior: 'instant' }); } catch (e) { /* ignore */ }
     }
+    applyDesign(frame.contentDocument);
     var base = viewBase(frame.contentDocument);
     if (oldWin) carryViewState(state.doc, frame.contentDocument, state.viewBase);
     state.viewBase = base;
@@ -992,6 +1145,7 @@
       $$('.ltab').forEach(function (x) { x.classList.toggle('active', x === tab); });
       $('#ltab-add').hidden = tab.getAttribute('data-ltab') !== 'add';
       $('#ltab-layers').hidden = tab.getAttribute('data-ltab') !== 'layers';
+      $('#ltab-design').hidden = tab.getAttribute('data-ltab') !== 'design';
       renderLayers();
     });
   });
@@ -1687,6 +1841,94 @@
 
   // ------------------------------------------------------------ blocks
 
+  /*
+   * Ready-made sections. They carry their own styles, using the site's
+   * colors where it has them (the CSS variables of the templates), so they
+   * look right on any site.
+   */
+  var V = {
+    primary: 'var(--color-primary, #2563eb)', onPrimary: 'var(--color-primary-text, #ffffff)',
+    surface: 'var(--color-surface, #f4f6f8)', border: 'var(--color-border, #e5e7eb)', muted: 'var(--color-muted, #6b7280)',
+    background: 'var(--color-background, #ffffff)', radius: 'var(--radius, 12px)', width: 'var(--width, 1120px)'
+  };
+
+  function sectionWrap(lines, background) {
+    return '<section style="padding:64px 20px' + (background ? ';background:' + background : '') + '">\n' +
+      '  <div style="max-width:' + V.width + ';margin:0 auto">\n' + lines.map(function (l) { return '    ' + l; }).join('\n') + '\n  </div>\n</section>';
+  }
+
+  function placeholderImg(ratio) {
+    return '<img src="' + escapeHtml(relFromPage(placeholderPath())) + '" alt="' + escapeHtml(t('placeholderAlt')) +
+      '" style="display:block;width:100%;height:auto;aspect-ratio:' + (ratio || '4/3') + ';object-fit:cover;border-radius:' + V.radius + '">';
+  }
+
+  function buttonHtml(text, inverted) {
+    return '<a href="#" style="display:inline-block;padding:13px 26px;border-radius:999px;font-weight:600;text-decoration:none;' +
+      (inverted ? 'background:' + V.onPrimary + ';color:' + V.primary : 'background:' + V.primary + ';color:' + V.onPrimary) + '">' + text + '</a>';
+  }
+
+  var GRID = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px';
+  var CARD = 'padding:28px;border:1px solid ' + V.border + ';border-radius:' + V.radius + ';background:' + V.background;
+
+  var SECTION_BLOCKS = [
+    { key: 'blkHero', thumb: 'hero', images: true, html: function () {
+      return '<section style="padding:72px 20px;background:' + V.surface + '">\n' +
+        '  <div style="max-width:' + V.width + ';margin:0 auto;display:flex;flex-wrap:wrap;gap:48px;align-items:center">\n' +
+        '    <div style="flex:1 1 340px">\n      <h1>' + t('secHeroTitle') + '</h1>\n' +
+        '      <p style="font-size:1.2rem;color:' + V.muted + '">' + t('secHeroText') + '</p>\n' +
+        '      <p>' + buttonHtml(t('secButton')) + '</p>\n    </div>\n' +
+        '    <div style="flex:1 1 340px">' + placeholderImg() + '</div>\n  </div>\n</section>';
+    } },
+    { key: 'blkTextImage', thumb: 'textimage', images: true, html: function () {
+      return '<section style="padding:64px 20px">\n' +
+        '  <div style="max-width:' + V.width + ';margin:0 auto;display:flex;flex-wrap:wrap;gap:48px;align-items:center">\n' +
+        '    <div style="flex:1 1 320px">\n      <h2>' + t('secTextTitle') + '</h2>\n      <p>' + t('secBodyText') + '</p>\n    </div>\n' +
+        '    <div style="flex:1 1 320px">' + placeholderImg() + '</div>\n  </div>\n</section>';
+    } },
+    { key: 'blkCards', thumb: 'cards', html: function () {
+      var card = '  <div style="' + CARD + '">\n    <h3>' + t('secCardTitle') + '</h3>\n    <p style="margin-bottom:0">' + t('secCardText') + '</p>\n  </div>';
+      return sectionWrap(['<h2>' + t('blkCards') + '</h2>', '<div style="' + GRID + '">', card, card, card, '</div>']);
+    } },
+    { key: 'blkTeam', thumb: 'team', images: true, html: function () {
+      var person = '  <div>\n    ' + placeholderImg('1/1') + '\n    <h3 style="margin:16px 0 2px">' + t('secPerson') + '</h3>\n' +
+        '    <p style="color:' + V.muted + '">' + t('secRole') + '</p>\n  </div>';
+      return sectionWrap(['<h2>' + t('blkTeam') + '</h2>', '<div style="' + GRID.replace('240px', '200px') + '">', person, person, person, '</div>'], V.surface);
+    } },
+    { key: 'blkQuote', thumb: 'quote', html: function () {
+      return sectionWrap(['<blockquote style="max-width:760px;margin:0 auto;text-align:center;font-size:1.6rem;line-height:1.45">' + t('secQuote') + '</blockquote>',
+        '<p style="text-align:center;color:' + V.muted + '">' + t('secQuoteBy') + '</p>']);
+    } },
+    { key: 'blkCta', thumb: 'cta', html: function () {
+      return sectionWrap(['<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:24px;padding:48px;border-radius:' + V.radius +
+        ';background:' + V.primary + ';color:' + V.onPrimary + '">',
+        '  <div>\n      <h2 style="margin:0;color:inherit">' + t('secCtaTitle') + '</h2>\n      <p style="margin:8px 0 0">' + t('secCtaText') + '</p>\n    </div>',
+        '  ' + buttonHtml(t('secCtaButton'), true), '</div>']);
+    } },
+    { key: 'blkContact', thumb: 'contact', html: function () {
+      var rows = t('secHours').map(function (r) {
+        return '      <tr><th style="text-align:left;padding:8px 16px 8px 0">' + r[0] + '</th><td style="padding:8px 0">' + r[1] + '</td></tr>';
+      }).join('\n');
+      return sectionWrap(['<h2>' + t('secContactTitle') + '</h2>', '<div style="' + GRID.replace('240px', '260px') + '">',
+        '  <div style="' + CARD + '">\n      <p>' + t('secAddress') + '</p>\n      <p style="margin-bottom:0">' + t('secPhone') +
+        ': <a href="tel:+491234567890">0123 456 7890</a><br>' + t('secEmail') + ': <a href="mailto:info@example.com">info@example.com</a></p>\n    </div>',
+        '  <div style="' + CARD + '">\n      <h3>' + t('secHoursTitle') + '</h3>\n      <table style="border-collapse:collapse">\n' + rows + '\n      </table>\n    </div>',
+        '</div>']);
+    } },
+    { key: 'blkGallery', thumb: 'gallery', images: true, html: function () {
+      var list = [];
+      for (var i = 0; i < 6; i++) list.push('  ' + placeholderImg('1/1'));
+      return sectionWrap(['<h2>' + t('secGalleryTitle') + '</h2>', '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px">']
+        .concat(list, ['</div>']));
+    } },
+    { key: 'blkFaq', thumb: 'accordion', html: function () {
+      var items = [];
+      for (var i = 1; i <= 3; i++) items.push(accordionItem(t('newQuestion') + ' ' + i, i === 1).replace(/\n/g, '\n    '));
+      return sectionWrap(['<h2>' + t('secFaqTitle') + '</h2>', '<div style="display:flex;flex-direction:column;gap:12px;max-width:800px">']
+        .concat(items.map(function (x) { return '  ' + x; }), ['</div>']));
+    } }
+  ];
+  SECTION_BLOCKS.forEach(function (b) { b.section = true; });
+
   var BLOCKS = [
     { key: 'blkHeading', thumb: 'heading', html: function () { return '<h2>' + t('newHeading') + '</h2>'; } },
     { key: 'blkParagraph', thumb: 'text', html: function () { return '<p>' + t('newParagraph') + '</p>'; } },
@@ -1736,7 +1978,15 @@
     accitem: '<rect x="6" y="6" width="36" height="20" rx="3" class="o"/><rect x="10" y="10" width="18" height="3" rx="1.5" class="f"/><rect x="10" y="17" width="26" height="3" rx="1.5"/>',
     divider: '<rect x="6" y="15" width="36" height="2" rx="1" class="f"/>',
     spacer: '<path d="M24 6v20M20 10l4-4 4 4M20 22l4 4 4-4" class="s"/>',
-    video: '<rect x="6" y="5" width="36" height="22" rx="4"/><path d="M21 11l9 5-9 5z" class="f"/>'
+    video: '<rect x="6" y="5" width="36" height="22" rx="4"/><path d="M21 11l9 5-9 5z" class="f"/>',
+    hero: '<rect x="2" y="3" width="44" height="26" rx="3"/><rect x="6" y="9" width="16" height="4" rx="2" class="f"/><rect x="6" y="16" width="14" height="2" rx="1" class="o"/><rect x="6" y="21" width="9" height="4" rx="2" class="f"/><rect x="26" y="7" width="16" height="18" rx="2" class="o"/>',
+    textimage: '<rect x="6" y="8" width="16" height="3" rx="1.5" class="f"/><rect x="6" y="14" width="16" height="2" rx="1"/><rect x="6" y="19" width="12" height="2" rx="1"/><rect x="26" y="6" width="16" height="20" rx="2" class="o"/>',
+    cards: '<rect x="4" y="7" width="12" height="18" rx="2" class="o"/><rect x="18" y="7" width="12" height="18" rx="2" class="o"/><rect x="32" y="7" width="12" height="18" rx="2" class="o"/><rect x="6" y="10" width="5" height="3" rx="1" class="f"/><rect x="20" y="10" width="5" height="3" rx="1" class="f"/><rect x="34" y="10" width="5" height="3" rx="1" class="f"/>',
+    team: '<circle cx="10" cy="13" r="5" class="o"/><circle cx="24" cy="13" r="5" class="o"/><circle cx="38" cy="13" r="5" class="o"/><rect x="5" y="21" width="10" height="2" rx="1" class="f"/><rect x="19" y="21" width="10" height="2" rx="1" class="f"/><rect x="33" y="21" width="10" height="2" rx="1" class="f"/>',
+    quote: '<path d="M10 10h5v6h-3c0 2 1 3 3 3v2c-3 0-5-2-5-5z" class="f"/><rect x="18" y="12" width="22" height="2" rx="1"/><rect x="18" y="17" width="16" height="2" rx="1"/>',
+    cta: '<rect x="3" y="7" width="42" height="18" rx="4" class="f"/><rect x="7" y="12" width="16" height="3" rx="1.5" class="w"/><rect x="31" y="13" width="10" height="6" rx="3" class="w"/>',
+    contact: '<rect x="4" y="6" width="19" height="20" rx="2" class="o"/><rect x="25" y="6" width="19" height="20" rx="2" class="o"/><rect x="7" y="10" width="12" height="2" rx="1" class="f"/><rect x="7" y="15" width="10" height="2" rx="1"/><rect x="28" y="10" width="12" height="2" rx="1" class="f"/><rect x="28" y="15" width="13" height="2" rx="1"/><rect x="28" y="19" width="13" height="2" rx="1"/>',
+    gallery: '<rect x="5" y="4" width="11" height="11" rx="2" class="o"/><rect x="18" y="4" width="11" height="11" rx="2" class="o"/><rect x="31" y="4" width="11" height="11" rx="2" class="o"/><rect x="5" y="17" width="11" height="11" rx="2" class="o"/><rect x="18" y="17" width="11" height="11" rx="2" class="o"/><rect x="31" y="17" width="11" height="11" rx="2" class="o"/>'
   };
 
   function box(extra) {
@@ -1783,8 +2033,30 @@
     return { parent: container, before: last ? last.nextSibling : null };
   }
 
+  /* Where a new section goes: after the section (or other part of the main area) that holds the selection. */
+  function sectionPoint() {
+    var main = state.src.querySelector('main') || state.src.body;
+    var s = twin(state.selected);
+    if (s && main.contains(s) && s !== main) {
+      while (s.parentNode !== main) s = s.parentNode;
+      return { parent: main, before: s.nextSibling };
+    }
+    if (s && main !== state.src.body && (main.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_PRECEDING)) {
+      return { parent: main, before: main.firstChild }; // something above the main area (the header) is selected
+    }
+    var last = main.lastElementChild;
+    while (last && last.tagName === 'SCRIPT') last = last.previousElementSibling;
+    return { parent: main, before: last ? last.nextSibling : null };
+  }
+
   function insertBlock(block, livePos) {
     if (!state.doc) return;
+    if (block.images && !block.ready) {
+      ensurePlaceholder().then(function () {
+        insertBlock({ html: block.html, section: block.section, ready: true }, livePos);
+      }).catch(fail);
+      return;
+    }
     var html = block.html ? block.html() : null;
     if (block.video) {
       html = youtubeEmbed(prompt(t('videoPrompt'), 'https://www.youtube.com/watch?v='));
@@ -1797,7 +2069,7 @@
       if (!parent) return;
       at = { parent: parent, before: srcBefore(livePos.before, parent) };
     } else {
-      at = insertPoint();
+      at = block.section ? sectionPoint() : insertPoint();
     }
     srcInsert(at.parent, node, at.before);
     changed(idOf(node), { check: true, then: block.image ? function () { changeImage(); } : null });
@@ -1805,15 +2077,32 @@
 
   function buildBlocks() {
     var root = $('#blocks');
-    BLOCKS.forEach(function (b) {
-      var svg = '<svg viewBox="0 0 48 32" class="thumb-svg">' + THUMBS[b.thumb] + '</svg>';
-      root.appendChild(el('button', {
-        'class': 'block',
-        title: t('addHint'),
-        onclick: function () { if (!drag.justDropped) insertBlock(b); },
-        onmousedown: function (e) { if (e.button === 0) beginDrag(e, { block: b }); }
-      }, [el('span', { 'class': 'block-thumb', html: svg }), el('span', { 'class': 'block-name', text: t(b.key) })]));
+    [['blkGroupSections', SECTION_BLOCKS], ['blkGroupElements', BLOCKS]].forEach(function (group) {
+      root.appendChild(el('h3', { 'class': 'blocks-title', text: t(group[0]) }));
+      group[1].forEach(function (b) {
+        var svg = '<svg viewBox="0 0 48 32" class="thumb-svg">' + THUMBS[b.thumb] + '</svg>';
+        root.appendChild(el('button', {
+          'class': 'block' + (b.section ? ' section-block' : ''),
+          'data-block': b.key,
+          title: t('addHint'),
+          onclick: function () { if (!drag.justDropped) insertBlock(b); },
+          onmousedown: function (e) { if (e.button === 0) beginDrag(e, { block: b }); }
+        }, [el('span', { 'class': 'block-thumb', html: svg }), el('span', { 'class': 'block-name', text: t(b.key) })]));
+      });
     });
+  }
+
+  function placeholderPath() {
+    return 'images/' + WSETemplates.placeholderName(nsLang());
+  }
+
+  /* Sections with pictures use a placeholder picture; put it into the site first. */
+  function ensurePlaceholder() {
+    var path = placeholderPath();
+    if ((state.site.images || []).indexOf(path) >= 0) return Promise.resolve();
+    var name = baseName(path);
+    return api('/api/upload?dir=images&name=' + encodeURIComponent(name), new Blob([WSETemplates.placeholderSvg()], { type: 'image/svg+xml' }), true)
+      .then(function () { return refreshSite(); });
   }
 
   // ------------------------------------------------------------ drag and drop on the page
@@ -2242,9 +2531,15 @@
     return { html: state.src.body.innerHTML, css: S.serialize(state.model), model: S.clone(state.model) };
   }
 
-  function currentKey() {
+  function currentKey(designEdits) {
     if (!state.src) return '';
-    return state.src.body.innerHTML + '\u0000' + S.serialize(state.model);
+    var edits = designEdits || design.edits;
+    return state.src.body.innerHTML + '\u0000' + S.serialize(state.model) + '\u0000' + (state.prefix || '') +
+      (isEmpty(edits) ? '' : '\u0000' + JSON.stringify(edits));
+  }
+
+  function isEmpty(obj) {
+    return !obj || !Object.keys(obj).length;
   }
 
   function commit() {
@@ -2345,6 +2640,11 @@
 
   /* Look at the other pages of the site (after a page opened). */
   function findShared() {
+    state.sharedReady = findSharedNow();
+    return state.sharedReady;
+  }
+
+  function findSharedNow() {
     var seq = ++sharedSeq, page = state.page;
     state.shared = [];
     var own = candidatesIn(state.src.body);
@@ -2508,10 +2808,10 @@
   }
 
   /* After saving this page: offer the changes of shared parts to the other pages. */
-  function saveShared() {
+  function saveShared(auto) {
     var parts = changedParts();
     if (!parts.length) return Promise.resolve(0);
-    return askShared(parts).then(function (choice) {
+    return (auto ? Promise.resolve(parts) : askShared(parts)).then(function (choice) {
       var go = choice.filter(function (c) { return !c.only; });
       choice.forEach(function (c) { if (c.only) c.only.pages = []; }); // differs from the other pages now
       var pages = {};
@@ -2523,6 +2823,538 @@
         go.forEach(function (part) { part.text = partText(srcById(part.id)); });
         return count;
       });
+    });
+  }
+
+  // ------------------------------------------------------------ pages: new, settings, rename, delete
+
+  var TITLE_RE = /(<title\b[^>]*>)([\s\S]*?)(<\/title\s*>)/i;
+  var DESC_RE = /<meta\b[^>]*\bname\s*=\s*["']?description["']?[^>]*>/i;
+  var CONTENT_RE = /\bcontent\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i;
+
+  function decodeText(text) {
+    var box = document.createElement('textarea');
+    box.innerHTML = text;
+    return box.value;
+  }
+
+  function pageTitle(head) {
+    var m = TITLE_RE.exec(head || '');
+    return m ? decodeText(m[2]).replace(/\s+/g, ' ').trim() : '';
+  }
+
+  function pageDescription(head) {
+    var m = DESC_RE.exec(head || '');
+    var c = m && CONTENT_RE.exec(m[0]);
+    return c ? decodeText(c[1].replace(/^["']|["']$/g, '')) : '';
+  }
+
+  /* Put a tag on its own line after <title> (or at the end of <head>). */
+  function insertInHead(head, tag) {
+    var eol = /\r\n/.test(head) ? '\r\n' : '\n';
+    var m = TITLE_RE.exec(head);
+    if (m) {
+      var lineStart = head.lastIndexOf('\n', m.index) + 1;
+      var indent = /^[ \t]*/.exec(head.slice(lineStart))[0];
+      var at = m.index + m[0].length;
+      return head.slice(0, at) + eol + indent + tag + head.slice(at);
+    }
+    var end = head.search(/<\/head\s*>/i);
+    if (end >= 0) return head.slice(0, end) + '  ' + tag + eol + head.slice(end);
+    var open = /<head\b[^>]*>/i.exec(head);
+    if (!open) return head;
+    var after = open.index + open[0].length;
+    return head.slice(0, after) + eol + '  ' + tag + head.slice(after);
+  }
+
+  function withTitle(head, title) {
+    if (TITLE_RE.test(head)) return head.replace(TITLE_RE, function (m, open, text, close) { return open + escapeHtml(title) + close; });
+    return insertInHead(head, '<title>' + escapeHtml(title) + '</title>');
+  }
+
+  function withDescription(head, text) {
+    var m = DESC_RE.exec(head);
+    if (m) {
+      var tag = CONTENT_RE.test(m[0]) ? m[0].replace(CONTENT_RE, 'content="' + escapeHtml(text) + '"')
+        : m[0].replace(/\s*\/?>$/, ' content="' + escapeHtml(text) + '">');
+      return head.slice(0, m.index) + tag + head.slice(m.index + m[0].length);
+    }
+    return text ? insertInHead(head, '<meta name="description" content="' + escapeHtml(text) + '">') : head;
+  }
+
+  function baseName(path) {
+    return path.split('/').pop();
+  }
+
+  function validFile(name) {
+    return /^[\w\-.]+\.html?$/i.test(name) && !/^\./.test(name);
+  }
+
+  function showError(sel, msg) {
+    var box = $(sel);
+    box.textContent = msg;
+    box.hidden = !msg;
+  }
+
+  /* Load the list of pages again and open one of them. */
+  function reopenSite(page) {
+    return refreshSite().then(function (data) {
+      fillPages(data);
+      loadPage(data.pages.indexOf(page) >= 0 ? page : data.pages[0]);
+    });
+  }
+
+  /* The main menu: the list in the header's (or the first) <nav>. */
+  function mainMenuList() {
+    var nav = state.src.querySelector('header nav') || state.src.querySelector('nav');
+    return nav ? nav.querySelector('ul, ol') : null;
+  }
+
+  function addMenuEntry(file, title) {
+    var list = mainMenuList();
+    var items = $$(':scope > li', list);
+    var simple = items.filter(function (li) { return li.children.length === 1 && li.firstElementChild.tagName === 'A'; });
+    var model = simple[simple.length - 1] || items[items.length - 1];
+    var li;
+    if (model) {
+      li = unmark(model.cloneNode(true));
+      $$('ul, ol', li).forEach(function (sub) { sub.remove(); });
+    } else {
+      li = state.src.createElement('li');
+    }
+    var a = li.querySelector('a');
+    if (!a) {
+      li.textContent = '';
+      a = li.appendChild(state.src.createElement('a'));
+    }
+    a.setAttribute('href', baseName(file));
+    a.textContent = title;
+    annotate(li);
+    srcInsert(list, li, items.length ? items[items.length - 1].nextSibling : null);
+    changed(idOf(li));
+  }
+
+  /* The title of a new page, built like the title of this one ("Page – Site"). */
+  function newTitle(title) {
+    var current = pageTitle(state.prefix);
+    var site = current;
+    var sep = /\s+[–|·—-]\s+/.exec(current);
+    if (baseName(state.page) !== 'index.html' && sep) site = current.slice(sep.index + sep[0].length);
+    return site && site !== title ? title + ' – ' + site : title;
+  }
+
+  function siteHasClass(name) {
+    var re = new RegExp('\\.' + name + '(?![\\w-])');
+    return Array.prototype.some.call(state.doc ? state.doc.styleSheets : [], function (sheet) {
+      try {
+        return Array.prototype.some.call(sheet.cssRules, function (r) { return r.selectorText && re.test(r.selectorText); });
+      } catch (e) { return false; }
+    });
+  }
+
+  function lineIndent(text, at) {
+    var start = text.lastIndexOf('\n', at - 1) + 1;
+    return /^[ \t]*/.exec(text.slice(start))[0];
+  }
+
+  /* The source of a new page made from this one. */
+  function newPageSource(file, title, empty) {
+    var text = buildOutput();
+    var bodyAt = text.search(/<body\b/i);
+    if (bodyAt >= 0) text = withDescription(withTitle(text.slice(0, bodyAt), newTitle(title)), '') + text.slice(bodyAt);
+    // Menus and other repeated parts: mark the new page as the current one.
+    var own = baseName(state.page), link = baseName(file);
+    $$('*', state.src.body).forEach(function (part) {
+      if (!sharedCandidate(part)) return;
+      for (var p = part.parentElement; p; p = p.parentElement) if (sharedCandidate(p)) return;
+      var copy = unmark(part.cloneNode(true));
+      var targets = $$('a', copy).filter(function (a) { return (a.getAttribute('href') || '').replace(/^\.\//, '') === link; });
+      $$('a', part).forEach(function (a) {
+        var current = a.getAttribute('aria-current');
+        if ((a.getAttribute('href') || '').replace(/^\.\//, '') !== own) return;
+        targets.forEach(function (target) { if (current !== null) target.setAttribute('aria-current', current); });
+        // Classes like "current" on the link or on a box around it.
+        for (var e = a; e && e !== part.parentElement; e = e.parentElement) {
+          Array.prototype.forEach.call(e.classList, function (c) {
+            if (!MARK_CLASS.test(c)) return;
+            targets.forEach(function (target) {
+              var same = target.closest(e.tagName);
+              if (same && copy.contains(same)) same.classList.add(c);
+            });
+          });
+        }
+      });
+      var range = partRange(text, { tag: part.tagName, key: partKey(part) });
+      if (!range) return;
+      var html = restoreScripts(keepTagLayout(bareAttributes(keepEntities(stripIds(copy.outerHTML)))));
+      text = text.slice(0, range[0]) + html + text.slice(range[1]);
+    });
+    var main = state.src.querySelector('main');
+    if (empty && main) {
+      var range = partRange(text, { tag: 'MAIN', key: partKey(main) });
+      if (range) {
+        var whole = text.slice(range[0], range[1]);
+        var open = /^<main\b[^>]*>/i.exec(whole)[0];
+        var pad = lineIndent(text, range[0]), inner = pad + '  ', eol = /\r\n/.test(text) ? '\r\n' : '\n';
+        var lines;
+        if (siteHasClass('page-head')) {
+          lines = ['<section class="page-head">', '  <div class="container">', '    <h1>' + escapeHtml(title) + '</h1>', '  </div>', '</section>',
+            '<section class="section">', '  <div class="narrow">', '    <p>' + escapeHtml(t('npText')) + '</p>', '  </div>', '</section>'];
+        } else {
+          lines = ['<h1>' + escapeHtml(title) + '</h1>', '<p>' + escapeHtml(t('npText')) + '</p>'];
+        }
+        var body = eol + lines.map(function (l) { return inner + l; }).join(eol) + eol + pad;
+        text = text.slice(0, range[0]) + open + body + '</main>' + text.slice(range[1]);
+      }
+    }
+    return text;
+  }
+
+  var npFileTouched = false;
+
+  $('#btn-new-page').addEventListener('click', function () {
+    if (!state.src) return;
+    $('#np-title').value = '';
+    $('#np-file').value = '';
+    npFileTouched = false;
+    showError('#np-error', '');
+    $('#np-menu-wrap').hidden = !mainMenuList();
+    var hasMain = !!state.src.querySelector('main');
+    var radios = $$('input[name="np-kind"]');
+    radios[0].disabled = !hasMain;
+    radios[hasMain ? 0 : 1].checked = true;
+    $('#page-dialog').showModal();
+    $('#np-title').focus();
+  });
+
+  $('#np-title').addEventListener('input', function () {
+    if (!npFileTouched) $('#np-file').value = WSETemplates.slug($('#np-title').value) ? WSETemplates.slug($('#np-title').value) + '.html' : '';
+  });
+  $('#np-file').addEventListener('input', function () { npFileTouched = true; });
+  $('#page-form').addEventListener('submit', function (e) { e.preventDefault(); createPage(); });
+  $('#np-create').addEventListener('click', createPage);
+
+  function createPage() {
+    var title = $('#np-title').value.trim(), name = $('#np-file').value.trim();
+    if (!title) { $('#np-title').focus(); return; }
+    if (!validFile(name)) { showError('#np-error', t('npBadFile')); return; }
+    var dir = dirname(state.page), file = (dir ? dir + '/' : '') + name;
+    if (state.site.pages.indexOf(file) >= 0) { showError('#np-error', t('error', { msg: file })); return; }
+    var empty = $('input[name="np-kind"]:checked').value === 'empty';
+    var addMenu = !$('#np-menu-wrap').hidden && $('#np-menu').checked;
+    $('#page-dialog').close();
+    (isDirty() ? save() : Promise.resolve()).then(function () {
+      return state.sharedReady;
+    }).then(function () {
+      if (!addMenu) return null;
+      addMenuEntry(file, title);
+      return save({ autoShare: true });
+    }).then(function () {
+      return api('/api/create-page', { path: file, content: newPageSource(file, title, empty) });
+    }).then(function (data) {
+      state.site = data;
+      toast(t('npCreated', { name: title }) + ' ✓');
+      state.page = file;
+      fillPages(data);
+      loadPage(file);
+    }).catch(fail);
+  }
+
+  $('#btn-page-settings').addEventListener('click', function () {
+    if (!state.src) return;
+    $('#ps-title').value = pageTitle(state.prefix);
+    $('#ps-desc').value = pageDescription(state.prefix);
+    $('#ps-file').value = baseName(state.page);
+    $('#ps-title').disabled = $('#ps-desc').disabled = !!state.wholeDoc;
+    showError('#ps-error', '');
+    $('#settings-dialog').showModal();
+  });
+
+  $('#ps-apply').addEventListener('click', function () {
+    var name = $('#ps-file').value.trim();
+    if (name !== baseName(state.page) && !validFile(name)) { showError('#ps-error', t('npBadFile')); return; }
+    if (!state.wholeDoc) {
+      var title = $('#ps-title').value.trim(), desc = $('#ps-desc').value.trim();
+      if (title !== pageTitle(state.prefix)) state.prefix = withTitle(state.prefix, title);
+      if (desc !== pageDescription(state.prefix)) state.prefix = withDescription(state.prefix, desc);
+      updateDirty();
+    }
+    $('#settings-dialog').close();
+    if (name === baseName(state.page)) return;
+    var dir = dirname(state.page), to = (dir ? dir + '/' : '') + name;
+    (isDirty() ? save() : Promise.resolve()).then(function () {
+      return api('/api/rename-page', { from: state.page, to: to });
+    }).then(function (res) {
+      toast(t('psRenamed', { n: res.changed }) + ' ✓');
+      state.page = to;
+      return reopenSite(to);
+    }).catch(fail);
+  });
+
+  $('#ps-delete').addEventListener('click', function () {
+    var page = state.page;
+    if (!confirm(t('psDeleteConfirm', { page: page }))) return;
+    $('#settings-dialog').close();
+    Promise.resolve(state.sharedReady).then(function () {
+      // Take the page out of the menus on the other pages.
+      var link = baseName(page);
+      var parts = (state.shared || []).filter(function (part) { return part.pages.length; });
+      parts.forEach(function (part) {
+        var n = srcById(part.id);
+        $$('a', n).forEach(function (a) {
+          if ((a.getAttribute('href') || '').replace(/^\.\//, '') !== link) return;
+          var li = a.parentElement;
+          if (li && li.tagName === 'LI' && li.children.length === 1) srcRemove(li);
+          else if (a.parentElement && /^(NAV|DIV|P)$/.test(a.parentElement.tagName)) srcRemove(a);
+        });
+      });
+      return saveShared(true);
+    }).then(function () {
+      return api('/api/delete-page', { path: page });
+    }).then(function (res) {
+      state.savedKey = currentKey(); // its unsaved changes go with it
+      toast(t('psDeleted', { path: res.backup || '' }));
+      state.page = null;
+      return reopenSite('index.html');
+    }).catch(fail);
+  });
+
+  // ------------------------------------------------------------ design: colors and fonts of the whole site
+
+  /*
+   * Sites made with the templates (and many others) keep their colors and
+   * fonts as CSS variables in :root of their stylesheet. The Design tab
+   * shows them; a change is shown at once and written into the CSS file
+   * when the page is saved, replacing only the value.
+   */
+  var design = { files: [], vars: [], edits: {} };
+  var designSeq = 0;
+
+  function joinPath(dir, href) {
+    var parts = (dir ? dir.split('/') : []).concat(href.split('/'));
+    var out = [];
+    parts.forEach(function (p) {
+      if (p === '..') out.pop();
+      else if (p && p !== '.') out.push(p);
+    });
+    return out.join('/');
+  }
+
+  /* The custom properties set at the top level of :root rules, with where their values are. */
+  function rootVars(text) {
+    var clean = text.replace(/\/\*[\s\S]*?\*\//g, function (m) { return m.replace(/[^\n]/g, ' '); });
+    var out = [], depth = 0, from = 0, i;
+    for (i = 0; i < clean.length; i++) {
+      var c = clean[i];
+      if (c === '{') {
+        if (depth === 0) {
+          var selector = clean.slice(from, i).trim();
+          if (/^(:root|html)(\s*,\s*(:root|html))*$/.test(selector)) {
+            var end = clean.indexOf('}', i);
+            if (end < 0) break;
+            var block = clean.slice(i + 1, end), re = /(--[\w-]+)(\s*:\s*)([^;{}]*?)(\s*)(?=;|$)/g, m;
+            while ((m = re.exec(block))) {
+              var start = i + 1 + m.index + m[1].length + m[2].length;
+              out.push({ name: m[1], start: start, end: start + m[3].length, value: text.slice(start, start + m[3].length) });
+            }
+            i = end;
+            from = end + 1;
+            continue;
+          }
+        }
+        depth++;
+      } else if (c === '}') {
+        depth = Math.max(0, depth - 1);
+        if (depth === 0) from = i + 1;
+      } else if (c === ';' && depth === 0) {
+        from = i + 1;
+      }
+    }
+    return out;
+  }
+
+  function varKind(name, value) {
+    if (/var\(/.test(value)) return 'other';
+    if (window.CSS && CSS.supports('color', value) && !/^(inherit|initial|unset|currentcolor|transparent)$/i.test(value)) return 'color';
+    if (/font/i.test(name) && /[a-z]/i.test(value) && !/^[\d.]/.test(value)) return 'font';
+    return 'other';
+  }
+
+  function varLabel(name) {
+    var key = 'var_' + name.replace(/^--/, '').replace(/-/g, '_');
+    var label = t(key);
+    if (label !== key) return label;
+    var words = name.replace(/^--/, '').replace(/[-_]+/g, ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
+  function loadDesign() {
+    var seq = ++designSeq, dir = dirname(state.page);
+    design = { files: [], vars: [], edits: {} };
+    var hrefs = $$('link[rel~="stylesheet"][href]', state.src).map(function (l) { return l.getAttribute('href'); })
+      .filter(function (h) { return !/^([a-z]+:|\/\/|\/)/i.test(h); })
+      .map(function (h) { return joinPath(dir, h.split(/[?#]/)[0]); });
+    return Promise.all(hrefs.map(function (path) {
+      return api('/api/page?path=' + encodeURIComponent(path)).then(function (d) { return { path: path, text: d.source }; }, function () { return null; });
+    })).then(function (files) {
+      if (seq !== designSeq) return;
+      var byName = {};
+      design.files = files.filter(Boolean);
+      design.files.forEach(function (f) {
+        rootVars(f.text).forEach(function (v) {
+          var entry = byName[v.name];
+          if (!entry) {
+            entry = byName[v.name] = { name: v.name, at: [] };
+            design.vars.push(entry);
+          }
+          entry.at.push({ file: f.path, start: v.start, end: v.end });
+          entry.value = v.value.trim(); // the last one wins, as in CSS
+        });
+      });
+      design.vars.forEach(function (v) { v.kind = varKind(v.name, v.value); });
+      renderDesign();
+    });
+  }
+
+  function designValue(v) {
+    return Object.prototype.hasOwnProperty.call(design.edits, v.name) ? design.edits[v.name] : v.value;
+  }
+
+  function cssColorToHex(value) {
+    var probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    var rgb = getComputedStyle(probe).color;
+    probe.remove();
+    return rgbToHex(rgb);
+  }
+
+  function colorAlpha(value) {
+    var probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    var m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(getComputedStyle(probe).color);
+    probe.remove();
+    return m ? +m[1] : 1;
+  }
+
+  function setDesign(v, value) {
+    if (value === v.value || value === '') delete design.edits[v.name];
+    else design.edits[v.name] = value;
+    applyDesign(state.doc);
+    updateDirty();
+  }
+
+  /* Show the changed values in the page view (before they are saved). */
+  function applyDesign(doc) {
+    if (!doc || !doc.documentElement) return;
+    design.vars.forEach(function (v) {
+      if (Object.prototype.hasOwnProperty.call(design.edits, v.name)) doc.documentElement.style.setProperty(v.name, design.edits[v.name]);
+      else doc.documentElement.style.removeProperty(v.name);
+    });
+    if (!doc.documentElement.getAttribute('style')) doc.documentElement.removeAttribute('style');
+  }
+
+  function fontOptions(current) {
+    var seen = {}, list = [];
+    WSETemplates.FONTS.forEach(function (f) {
+      [['heading', f.heading], ['body', f.body]].forEach(function (pair) {
+        if (seen[pair[1]]) return;
+        seen[pair[1]] = true;
+        var first = pair[1].split(',')[0].replace(/["']/g, '').trim();
+        list.push({ value: pair[1], label: t('font_' + f.id) + ' (' + (first === 'system-ui' ? 'System' : first) + ')' });
+      });
+    });
+    if (!seen[current]) list.unshift({ value: current, label: t('fontCustom', { font: current.split(',')[0].replace(/["']/g, '').trim() }) });
+    return list;
+  }
+
+  function renderDesign() {
+    var root = $('#design');
+    root.innerHTML = '';
+    if (!design.vars.length) {
+      root.appendChild(el('p', { 'class': 'hint', text: t('designNone') }));
+      return;
+    }
+    var groups = { color: [], font: [], other: [] };
+    design.vars.forEach(function (v) { groups[v.kind].push(v); });
+    var row = function (v, control) {
+      var reset = el('button', { type: 'button', 'class': 'icon-btn small', title: t('designReset'), onclick: function () { setDesign(v, v.value); renderDesign(); } }, [icon('undo')]);
+      reset.hidden = !Object.prototype.hasOwnProperty.call(design.edits, v.name);
+      control.addEventListener('input', function () { reset.hidden = !Object.prototype.hasOwnProperty.call(design.edits, v.name); });
+      control.addEventListener('change', function () { reset.hidden = !Object.prototype.hasOwnProperty.call(design.edits, v.name); });
+      return el('div', { 'class': 'design-row', title: v.name }, [el('span', { 'class': 'design-label', text: varLabel(v.name) }), control, reset]);
+    };
+    if (groups.color.length) {
+      root.appendChild(el('h3', { text: t('designColors') }));
+      groups.color.forEach(function (v) {
+        var value = designValue(v);
+        var pick = el('input', { type: 'color', value: cssColorToHex(value) });
+        var text = el('input', { type: 'text', value: value, spellcheck: 'false' });
+        pick.addEventListener('input', function () {
+          // Keep the transparency of the color (the color picker has none).
+          var alpha = colorAlpha(v.value), val = pick.value;
+          if (alpha < 1) {
+            var n = parseInt(val.slice(1), 16);
+            val = 'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', ' + alpha + ')';
+          }
+          text.value = val;
+          setDesign(v, val);
+        });
+        text.addEventListener('change', function () {
+          var val = text.value.trim();
+          if (val && !CSS.supports('color', val)) { text.value = designValue(v); return; }
+          setDesign(v, val || v.value);
+          pick.value = cssColorToHex(designValue(v));
+        });
+        root.appendChild(row(v, el('span', { 'class': 'color-pair' }, [pick, text])));
+      });
+    }
+    if (groups.font.length) {
+      root.appendChild(el('h3', { text: t('designFonts') }));
+      groups.font.forEach(function (v) {
+        var value = designValue(v);
+        var select = el('select', {});
+        fontOptions(value).forEach(function (o) {
+          var opt = el('option', { value: o.value, text: o.label, style: 'font-family:' + o.value });
+          if (o.value === value) opt.selected = true;
+          select.appendChild(opt);
+        });
+        select.addEventListener('change', function () { setDesign(v, select.value); });
+        root.appendChild(row(v, select));
+      });
+    }
+    if (groups.other.length) {
+      var more = el('details', { 'class': 'design-more' }, [el('summary', { text: t('designOther') })]);
+      groups.other.forEach(function (v) {
+        var input = el('input', { type: 'text', value: designValue(v), spellcheck: 'false' });
+        input.addEventListener('change', function () { setDesign(v, input.value.trim()); });
+        more.appendChild(row(v, input));
+      });
+      root.appendChild(more);
+    }
+    root.appendChild(el('p', { 'class': 'hint', text: t('designFrom', { file: design.files.map(function (f) { return f.path; }).join(', ') }) }));
+  }
+
+  /* Write changed values into the CSS files: only the values change, the rest stays as it is. */
+  function saveDesign() {
+    if (isEmpty(design.edits)) return Promise.resolve();
+    var byFile = {};
+    design.vars.forEach(function (v) {
+      if (!Object.prototype.hasOwnProperty.call(design.edits, v.name)) return;
+      v.at.forEach(function (at) { (byFile[at.file] = byFile[at.file] || []).push({ start: at.start, end: at.end, value: design.edits[v.name] }); });
+    });
+    return Object.keys(byFile).reduce(function (chain, path) {
+      return chain.then(function () {
+        var file = design.files.filter(function (f) { return f.path === path; })[0];
+        var text = file.text;
+        byFile[path].sort(function (a, b) { return b.start - a.start; }).forEach(function (r) {
+          text = text.slice(0, r.start) + r.value + text.slice(r.end);
+        });
+        return api('/api/save', { path: path, content: text });
+      });
+    }, Promise.resolve()).then(function () {
+      return loadDesign();
     });
   }
 
@@ -2591,24 +3423,29 @@
     return headWithStyles(state.prefix, css) + restoreScripts(keepTagLayout(bareAttributes(keepEntities(body)))) + state.suffix;
   }
 
-  function save() {
+  /* Save the page (and the site's CSS when the Design tab changed it). opts.autoShare: no question about shared parts. */
+  function save(opts) {
     if (!state.src) return Promise.resolve();
     var label = $('#save-label');
     label.textContent = t('saving');
     var content = buildOutput();
-    var key = currentKey();
+    var key = currentKey({});
     return api('/api/save', { path: state.page, content: content }).then(function (res) {
-      state.savedKey = key;
+      state.savedKey = key + (isEmpty(design.edits) ? '' : '*');
       updateDirty();
       toast(res.backup ? t('savedTo', { path: res.backup }) : t('saved') + ' ✓');
-      return saveShared().then(function (count) {
+      return saveDesign().then(function () {
+        if (state.savedKey === key + '*') state.savedKey = key;
+        updateDirty();
+        return saveShared(opts && opts.autoShare === true);
+      }).then(function (count) {
         if (count) toast(t('sharedDone', { n: count }) + ' ✓');
         renderCrumbs();
       });
     }).catch(fail).then(function () { label.textContent = t('save'); });
   }
 
-  $('#btn-save').addEventListener('click', save);
+  $('#btn-save').addEventListener('click', function () { save(); });
 
   // ------------------------------------------------------------ preview & devices
 

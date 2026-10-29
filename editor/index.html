@@ -41,6 +41,10 @@
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c1 0 1.6-.8 1.6-1.6 0-.5-.2-.8-.5-1.1-.3-.3-.5-.7-.5-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4-4-7.6-9-7.6z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7" r="1.2"/><circle cx="14.5" cy="7" r="1.2"/><circle cx="17" cy="11" r="1.2"/></symbol>
+      <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
       <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
     </defs>
   </svg>
@@ -49,9 +53,18 @@
   <div id="start" class="start" hidden>
     <div class="start-card">
       <div class="start-logo"><img src="/app/icon.svg" alt="" width="48" height="48"></div>
-      <h1 data-i18n="openTitle"></h1>
-      <p class="lead" data-i18n="openIntro"></p>
-      <button id="choose-folder" class="btn primary big"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="chooseFolder"></span></button>
+      <h1 data-i18n="startTitle"></h1>
+      <p class="lead" data-i18n="startIntro"></p>
+      <div class="start-actions">
+        <button id="btn-new-site" class="start-choice primary">
+          <svg class="ic"><use href="#i-sparkle"/></svg>
+          <b data-i18n="newSite"></b><span data-i18n="newSiteHint"></span>
+        </button>
+        <button id="choose-folder" class="start-choice">
+          <svg class="ic"><use href="#i-folder"/></svg>
+          <b data-i18n="openSite"></b><span data-i18n="openIntro"></span>
+        </button>
+      </div>
       <form id="path-form" class="path-form">
         <label for="path-input" data-i18n="orTypePath"></label>
         <div class="row">
@@ -67,6 +80,34 @@
     </div>
   </div>
 
+  <!-- New website: template, name, color and font, with a live preview -->
+  <div id="new-site" class="new-site" hidden>
+    <aside class="ns-form">
+      <button class="btn ghost small" id="ns-back"><svg class="ic"><use href="#i-parent"/></svg><span data-i18n="back"></span></button>
+      <h1 data-i18n="nsTitle"></h1>
+      <label class="form-field"><span data-i18n="nsName"></span><input id="ns-name" type="text" autocomplete="off"></label>
+      <div class="form-field"><span data-i18n="nsTemplate"></span><div id="ns-templates" class="ns-templates"></div></div>
+      <div class="form-field"><span data-i18n="nsColor"></span><div id="ns-colors" class="ns-colors"></div></div>
+      <div class="form-field"><span data-i18n="nsFont"></span><div id="ns-fonts" class="ns-fonts"></div><small class="hint" data-i18n="nsFontsNote"></small></div>
+      <label class="form-field"><span data-i18n="nsWhere"></span>
+        <span class="row"><input id="ns-parent" type="text" spellcheck="false"><button class="btn small" type="button" id="ns-pick" data-i18n="nsPick"></button></span>
+        <small class="hint" id="ns-folder-note"></small>
+      </label>
+      <p id="ns-error" class="error" hidden></p>
+      <button id="ns-create" class="btn primary big"><svg class="ic"><use href="#i-check"/></svg><span data-i18n="nsCreate"></span></button>
+    </aside>
+    <section class="ns-preview">
+      <div class="ns-preview-bar">
+        <span data-i18n="preview"></span>
+        <div class="seg-group" role="group">
+          <button class="seg-btn ns-device active" data-width="1280"><svg class="ic"><use href="#i-desktop"/></svg></button>
+          <button class="seg-btn ns-device" data-width="390"><svg class="ic"><use href="#i-mobile"/></svg></button>
+        </div>
+      </div>
+      <div class="ns-stage" id="ns-stage"><iframe id="ns-frame" title="Preview" sandbox="allow-same-origin"></iframe></div>
+    </section>
+  </div>
+
   <!-- Editor -->
   <div id="app" class="app" hidden>
     <header class="topbar">
@@ -76,6 +117,10 @@
       </button>
       <div class="select-wrap">
         <select id="page-select" class="page-select" data-i18n-title="page"></select>
+      </div>
+      <div class="icon-group">
+        <button id="btn-new-page" class="icon-btn" data-i18n-title="newPage"><svg class="ic"><use href="#i-file-plus"/></svg></button>
+        <button id="btn-page-settings" class="icon-btn" data-i18n-title="pageSettings"><svg class="ic"><use href="#i-gear"/></svg></button>
       </div>
       <div class="seg-group devices" role="group">
         <button class="seg-btn device active" data-device="desktop" data-i18n-title="desktop"><svg class="ic"><use href="#i-desktop"/></svg><span data-i18n="desktop"></span></button>
@@ -98,6 +143,7 @@
         <div class="tabs" role="tablist">
           <button class="ltab tab active" data-ltab="add"><svg class="ic"><use href="#i-plus"/></svg><span data-i18n="add"></span></button>
           <button class="ltab tab" data-ltab="layers"><svg class="ic"><use href="#i-layers"/></svg><span data-i18n="layers"></span></button>
+          <button class="ltab tab" data-ltab="design"><svg class="ic"><use href="#i-palette"/></svg><span data-i18n="design"></span></button>
         </div>
         <div id="ltab-add" class="ltab-body">
           <p class="hint" data-i18n="addHint"></p>
@@ -106,6 +152,10 @@
         <div id="ltab-layers" class="ltab-body" hidden>
           <p class="hint" data-i18n="layersHint"></p>
           <div id="layers" class="layers" role="tree"></div>
+        </div>
+        <div id="ltab-design" class="ltab-body" hidden>
+          <p class="hint" data-i18n="designHint"></p>
+          <div id="design" class="design"></div>
         </div>
       </aside>
 
@@ -190,6 +240,30 @@
     <footer><div class="spacer"></div><button class="btn primary" data-close data-i18n="close"></button></footer>
   </dialog>
 
+  <dialog id="page-dialog" class="dialog small">
+    <header><h2 data-i18n="newPage"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
+    <form id="page-form" class="dialog-form" method="dialog">
+      <label class="form-field"><span data-i18n="npTitle"></span><input id="np-title" type="text" required autocomplete="off"></label>
+      <label class="form-field"><span data-i18n="npFile"></span><input id="np-file" type="text" required spellcheck="false" autocomplete="off"></label>
+      <label class="check"><input type="radio" name="np-kind" value="empty" checked><span data-i18n="npEmpty"></span></label>
+      <label class="check"><input type="radio" name="np-kind" value="copy"><span data-i18n="npCopy"></span></label>
+      <label class="check" id="np-menu-wrap"><input id="np-menu" type="checkbox" checked><span data-i18n="npMenu"></span></label>
+      <p id="np-error" class="error" hidden></p>
+    </form>
+    <footer><div class="spacer"></div><button class="btn ghost" data-close data-i18n="cancel"></button><button class="btn primary" id="np-create" data-i18n="npCreate"></button></footer>
+  </dialog>
+
+  <dialog id="settings-dialog" class="dialog small">
+    <header><h2 data-i18n="pageSettings"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
+    <form class="dialog-form" method="dialog">
+      <label class="form-field"><span data-i18n="psTitle"></span><input id="ps-title" type="text" autocomplete="off"></label>
+      <label class="form-field"><span data-i18n="psDesc"></span><textarea id="ps-desc" rows="3"></textarea><small class="hint" data-i18n="psDescHint"></small></label>
+      <label class="form-field"><span data-i18n="npFile"></span><input id="ps-file" type="text" spellcheck="false" autocomplete="off"><small class="hint" data-i18n="psFileHint"></small></label>
+      <p id="ps-error" class="error" hidden></p>
+    </form>
+    <footer><button class="btn ghost danger-text" id="ps-delete"><svg class="ic"><use href="#i-trash"/></svg><span data-i18n="psDelete"></span></button><div class="spacer"></div><button class="btn ghost" data-close data-i18n="cancel"></button><button class="btn primary" id="ps-apply" data-i18n="psApply"></button></footer>
+  </dialog>
+
   <dialog id="shared-dialog" class="dialog small">
     <header><h2 data-i18n="sharedTitle"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
     <p data-i18n="sharedText"></p>
@@ -200,6 +274,7 @@
   <div id="toast" class="toast" hidden><span id="toast-text"></span><button id="toast-action" class="toast-action" hidden></button></div>
 
   <script src="/app/styles.js"></script>
+  <script src="/app/templates.js"></script>
   <script src="/app/editor.js"></script>
 </body>
 </html>

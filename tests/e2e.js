@@ -393,6 +393,77 @@ async function waitForServer() {
     assert.strictEqual((await fetch(`http://127.0.0.1:${port}/index.html`)).status, 200);
     assert.strictEqual((await fetch(`http://127.0.0.1:${port}/../../etc/passwd`)).status, 404);
 
+    // 25. A new website from a template, without any code.
+    await page.click('#btn-folder');
+    await page.click('#btn-new-site');
+    await page.fill('#ns-name', 'Bakery Sunshine');
+    await page.click('.ns-template[data-template="business"]');
+    await page.click('.swatch:nth-child(2)');
+    await page.click('.ns-font:nth-child(2)');
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wse-new-'));
+    await page.fill('#ns-parent', parent);
+    await page.waitForFunction(() => /^<!doctype html>/.test(document.querySelector('#ns-frame').srcdoc || ''));
+    await page.click('#ns-create');
+    await page.waitForFunction(() => !document.querySelector('#app').hidden && WSE.ready() && WSE.state.page === 'index.html');
+    const made = path.join(parent, 'Bakery Sunshine');
+    assert.deepStrictEqual(fs.readdirSync(made).sort(), ['about.html', 'contact.html', 'css', 'images', 'imprint.html', 'index.html', 'js', 'privacy.html', 'services.html']);
+    assert.match(fs.readFileSync(path.join(made, 'css', 'style.css'), 'utf8'), /--color-primary: #2563eb;[\s\S]*--font-heading: Georgia/);
+    assert.strictEqual(await frame().locator('.nav a[aria-current="page"]').innerText(), 'Home');
+    await page.waitForFunction(() => WSE.state.shared && WSE.state.shared.length === 2);
+
+    // 26. A new page, added to the menu on every page.
+    await page.click('#btn-new-page');
+    await page.fill('#np-title', 'Opening hours');
+    assert.strictEqual(await page.inputValue('#np-file'), 'opening-hours.html');
+    await page.click('#np-create');
+    await page.waitForFunction(() => WSE.state.page === 'opening-hours.html' && WSE.ready());
+    const hours = fs.readFileSync(path.join(made, 'opening-hours.html'), 'utf8');
+    assert.match(hours, /<title>Opening hours – Bakery Sunshine<\/title>/);
+    assert.ok(hours.includes('<li><a href="opening-hours.html" aria-current="page">Opening hours</a></li>'), 'new page is the current one in its menu');
+    assert.ok(hours.includes('<li><a href="index.html">Home</a></li>'));
+    assert.match(hours, /<main>\s*<section class="page-head">\s*<div class="container">\s*<h1>Opening hours<\/h1>/);
+    for (const other of ['index.html', 'contact.html', 'privacy.html']) {
+      assert.ok(fs.readFileSync(path.join(made, other), 'utf8').includes('<li><a href="opening-hours.html">Opening hours</a></li>'), 'menu entry on ' + other);
+    }
+    assert.ok(fs.readFileSync(path.join(made, 'contact.html'), 'utf8').includes('<a href="contact.html" aria-current="page">Contact</a>'));
+
+    // 27. Ready-made sections, the Design tab and the page settings.
+    await page.click('.block[data-block="blkTeam"]');
+    await settle();
+    assert.strictEqual(await frame().locator('main > section').count(), 3, 'team section added to the main area');
+    assert.ok(fs.existsSync(path.join(made, 'images', 'placeholder.svg')));
+    await page.click('.ltab[data-ltab="design"]');
+    await page.locator('.design-row[title="--color-primary"] input[type=text]').fill('#16a34a');
+    await page.locator('.design-row[title="--color-primary"] input[type=text]').press('Enter');
+    assert.strictEqual(await live(() => getComputedStyle(WSE.state.doc.documentElement).getPropertyValue('--color-primary').trim()), '#16a34a');
+    await page.click('#btn-page-settings');
+    await page.fill('#ps-desc', 'When we are open & how to find us.');
+    await page.click('#ps-apply');
+    await page.click('#btn-save');
+    await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
+    await sleep(300);
+    const css = fs.readFileSync(path.join(made, 'css', 'style.css'), 'utf8');
+    assert.match(css, /--color-primary: #16a34a;/);
+    const hours2 = fs.readFileSync(path.join(made, 'opening-hours.html'), 'utf8');
+    assert.ok(hours2.includes('<meta name="description" content="When we are open &amp; how to find us.">'));
+    assert.ok(hours2.includes('src="images/placeholder.svg"'));
+    await page.click('.ltab[data-ltab="add"]');
+
+    // 28. Renaming a page changes the links to it; deleting it takes it out of the menus.
+    await page.click('#btn-page-settings');
+    await page.fill('#ps-file', 'hours.html');
+    await page.click('#ps-apply');
+    await page.waitForFunction(() => WSE.state.page === 'hours.html' && WSE.ready());
+    assert.ok(fs.readFileSync(path.join(made, 'about.html'), 'utf8').includes('<li><a href="hours.html">Opening hours</a></li>'));
+    await page.click('#btn-page-settings');
+    await page.click('#ps-delete');
+    await page.waitForFunction(() => WSE.state.page === 'index.html' && WSE.ready());
+    assert.ok(!fs.existsSync(path.join(made, 'hours.html')));
+    for (const other of ['index.html', 'about.html']) {
+      assert.ok(!fs.readFileSync(path.join(made, other), 'utf8').includes('hours.html'), 'menu entry removed on ' + other);
+    }
+    fs.rmSync(parent, { recursive: true, force: true });
+
     assert.deepStrictEqual(errors, [], 'no page errors');
     await page.screenshot({ path: path.join(os.tmpdir(), 'wse-editor.png') });
     console.log('E2E OK');

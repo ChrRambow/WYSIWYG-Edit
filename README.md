@@ -17,8 +17,9 @@ install on a Mac) plus the editor in your web browser.
      choose **Open**, then **Open** again.
    - If macOS asks to install the "command line developer tools", accept.
      That installs Python 3, which the editor needs.
-3. Your browser opens the editor. Click **Choose folder…** and pick the folder
-   of your website (the folder that contains `index.html`).
+3. Your browser opens the editor. Click **Create a new website** to start from
+   a template, or **Open a website** and pick the folder of your website (the
+   folder that contains `index.html`).
 4. Keep the Terminal window open while you work. Close it (or press
    `Ctrl+C`) to stop the editor.
 
@@ -34,6 +35,10 @@ To try it out, open the included `example-site` folder.
 
 | | |
 |---|---|
+| **New website** | Pick a template (business or practice with six pages, personal or portfolio, or blank), a main color and fonts. A live preview shows the result before anything is written. The website gets its own folder with plain HTML, one CSS file, a tiny script for the phone menu and placeholder pictures. The fonts are the ones on every computer, nothing is loaded from other servers. |
+| **Pages** | The page buttons next to the page list add a new page (empty with the same header and footer, or a copy) and can put it into the menu of every page. **Page settings** change the title and description for search engines, rename the page (links on all pages follow) or delete it (it leaves the menus, a backup is kept). |
+| **Design** | The **Design** tab on the left changes the colors and fonts of the whole website at once. It works with every site that keeps its colors as CSS variables in `:root`, like the templates do; only the values in the CSS file change. |
+| **Sections** | Ready-made sections in the **Add** tab: big intro, text and picture, services, team, quote, call to action, contact with opening hours, pictures and questions. They use the website's colors. |
 | **Edit text** | Double-click any text and type. Bold, italic, underline and links are in the small toolbar. `Enter` starts a new paragraph, `Shift+Enter` a line break, `Esc` finishes. |
 | **Change images** | Double-click an image, pick one from the website or upload a new one. |
 | **Accordions** | Built from the standard HTML `<details>` element, so they open and close on the website without any JavaScript. In the editor, the ▾ button (or **Settings** → "Open when the page loads") opens and closes an item; it is saved the way you leave it. Add more items with the "Accordion item" block or by duplicating one. |
@@ -83,9 +88,10 @@ The editor speaks German or English, following the browser's language
   only hides or shows can be reached with **Use page**, the **Structure** tab
   or the **HTML** tab.
 - Style changes apply to one element or to all elements with one of its
-  classes. Editing the site's own `.css` files is not part of the editor yet.
-- There is no "new page" command yet: copy an existing `.html` file in the
-  Finder and open it in the editor.
+  classes. Of the site's own `.css` files, only the colors, fonts and sizes
+  kept as CSS variables can be changed (in the **Design** tab).
+- Design changes are not part of undo; the arrow next to a changed value
+  takes it back until you save.
 
 ## For developers
 
@@ -95,7 +101,7 @@ JavaScript.
 
 ```
 server.py          local server: serves the editor and the site, saves, uploads, backups
-editor/            the editor (index.html, editor.js, styles.js, i18n.js, editor.css)
+editor/            the editor (index.html, editor.js, styles.js, templates.js, i18n.js, editor.css)
                    editor.js has an overview of how the live view and the saved copy work together
 example-site/      a small responsive sample website
 tests/             unit tests (Python) and an end-to-end test (Playwright)
