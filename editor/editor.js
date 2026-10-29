@@ -1,20 +1,33 @@
 /*
  * WYSIWYG Edit - the editor.
  *
- * The page being edited is loaded into an iframe straight from the local
- * server, so it looks exactly like the real site: its own CSS, fonts,
- * images and media queries. Its <script> elements are swapped for inert
- * placeholders by the server, so scripts do not run (and change the page)
- * while editing. On save, the editor takes the edited <body>, puts the
- * original scripts back byte for byte, and splices the result into the
- * original file, so everything outside <body> (doctype, <head>, comments)
- * stays exactly as it was. The only addition is one <style> block in the
- * <head> with the styles changed in the editor.
+ * Two copies of the page are kept:
+ *
+ *  - The *source copy* (state.src) is the page parsed without running any
+ *    script. It is what gets saved. Every element in its <body> carries a
+ *    data-wse-id marker, and its <script> elements are inert placeholders
+ *    whose original text is put back byte for byte on save.
+ *
+ *  - The *live view* is an iframe that shows the source copy served from
+ *    the local server with all scripts running, so the page looks and
+ *    behaves exactly like the real site (sliders, menus, animations...).
+ *
+ * The user points at elements in the live view; the data-wse-id markers tell
+ * which source element they are. Text, attribute and style changes are made
+ * in both copies at once. Structural changes (move, insert, delete...) are
+ * made in the source copy and the live view is rebuilt from it in a second,
+ * hidden iframe that is swapped in when ready, so the page never flickers.
+ * Anything the site's scripts add or change is never saved.
+ *
+ * On save, everything outside <body> (doctype, <head>, comments) is taken
+ * from the original file unchanged; the only addition is one <style> block
+ * in the <head> with the styles changed in the editor.
  */
 (function () {
   'use strict';
 
   var S = window.WSEStyles;
+  var ID = 'data-wse-id';
 
   // ------------------------------------------------------------ helpers
 
@@ -31,6 +44,15 @@
     });
     (children || []).forEach(function (c) { if (c) node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
     return node;
+  }
+
+  function icon(name) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'ic');
+    var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#i-' + name);
+    svg.appendChild(use);
+    return svg;
   }
 
   function api(path, body, raw) {
@@ -53,13 +75,19 @@
   }
 
   var toastTimer;
-  function toast(msg, isError) {
+  function toast(msg, isError, action) {
     var box = $('#toast');
-    box.textContent = msg;
+    $('#toast-text').textContent = msg;
+    var btn = $('#toast-action');
+    btn.hidden = !action;
+    if (action) {
+      btn.textContent = action.label;
+      btn.onclick = function () { box.hidden = true; action.run(); };
+    }
     box.className = 'toast' + (isError ? ' error' : '');
     box.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { box.hidden = true; }, isError ? 7000 : 3500);
+    toastTimer = setTimeout(function () { box.hidden = true; }, isError || action ? 8000 : 3500);
   }
 
   function fail(err) {
@@ -111,22 +139,170 @@
     scripts: [],         // original <script> elements, by placeholder index
     dropScripts: {},     // placeholder indexes that live outside <body> in the source
     wholeDoc: false,     // the page has no <body> tag; save the whole document
-    doc: null,           // the iframe's document
+    src: null,           // the source copy (see top of file)
+    nextId: 1,
+    frame: null,         // the iframe currently shown
+    doc: null,           // ... its document and window
     win: null,
-    styleEl: null,       // <style id="wysiwyg-edit-styles"> inside the iframe
-    model: S.create(),
+    styleEl: null,       // <style id="wysiwyg-edit-styles"> in the live view
+    model: S.create(),   // the styles changed in the editor
     device: 'desktop',
-    selected: null,
+    selected: null,      // selected element in the live view
+    selectedId: null,
     hovered: null,
     editing: null,
-    editingAttr: null,
     target: 'self',      // "self" or a class name the style panel applies to
+    interact: false,     // clicks go to the page (menus, sliders) instead of selecting
     history: [],
     hIndex: -1,
     savedKey: ''
   };
 
-  var frame = $('#frame');
+  var frames = [$('#frame-a'), $('#frame-b')];
+  state.frame = frames[0];
+
+  // ------------------------------------------------------------ ids: live view <-> source copy
+
+  function idOf(node) {
+    return node && node.nodeType === 1 ? node.getAttribute(ID) : null;
+  }
+
+  function srcById(id) {
+    return id ? state.src.querySelector('[' + ID + '="' + id + '"]') : null;
+  }
+
+  function liveById(id) {
+    return id && state.doc ? state.doc.querySelector('[' + ID + '="' + id + '"]') : null;
+  }
+
+  /* The source element for an element of the live view. */
+  function twin(live) {
+    if (!live) return null;
+    if (state.doc && live === state.doc.body) return state.src.body;
+    var id = idOf(live);
+    if (id) return srcById(id);
+    var sidx = live.tagName === 'SCRIPT' ? live.getAttribute('data-wse-sidx') : null;
+    return sidx !== null ? state.src.querySelector('script[data-wse-idx="' + sidx + '"]') : null;
+  }
+
+  function newId(node) {
+    var id = String(state.nextId++);
+    node.setAttribute(ID, id);
+    return id;
+  }
+
+  function isPlaceholder(node) {
+    return node.tagName === 'SCRIPT' && node.getAttribute('type') === 'text/x-wse-off';
+  }
+
+  /* Give every element below (and including) root a data-wse-id. */
+  function annotate(root) {
+    var list = root.nodeType === 1 ? [root].concat($$('*', root)) : $$('*', root);
+    list.forEach(function (n) {
+      if (isPlaceholder(n)) return;
+      if (n.getAttribute(ID)) {
+        var m = +n.getAttribute(ID);
+        if (m >= state.nextId) state.nextId = m + 1;
+      } else {
+        newId(n);
+      }
+    });
+  }
+
+  function placeholder(idx) {
+    var p = state.src.createElement('script');
+    p.setAttribute('type', 'text/x-wse-off');
+    p.setAttribute('data-wse-idx', String(idx));
+    return p;
+  }
+
+  function stripIds(html) {
+    return html.replace(/ data-wse-id="\d+"/g, '');
+  }
+
+  /* Insert into the source copy, keeping each element on its own line. */
+  function srcInsert(parent, node, before) {
+    if (before && before.nodeType === 3 && !before.nodeValue.trim()) before = before.nextSibling;
+    parent.insertBefore(node, before || null);
+    var prev = node.previousSibling;
+    if (prev && prev.nodeType === 3 && !prev.nodeValue.trim() && /\n/.test(prev.nodeValue)) {
+      parent.insertBefore(state.src.createTextNode(prev.nodeValue), node.nextSibling);
+    }
+  }
+
+  function srcRemove(node) {
+    var prev = node.previousSibling;
+    if (prev && prev.nodeType === 3 && !prev.nodeValue.trim() && node.nextSibling) prev.remove();
+    node.remove();
+  }
+
+  /* The source element to insert before, for a "before" node of the live view. */
+  function srcBefore(liveBefore, srcParent) {
+    for (var n = liveBefore; n; n = n.nextSibling) {
+      if (n.nodeType !== 1) continue;
+      var t = twin(n);
+      if (t && t.parentNode === srcParent) return t;
+    }
+    return null;
+  }
+
+  /* Set an attribute in both copies (value null removes it). */
+  function setAttr(live, name, value) {
+    [live, twin(live)].forEach(function (n) {
+      if (!n) return;
+      if (value === null || value === undefined) n.removeAttribute(name);
+      else n.setAttribute(name, value);
+    });
+  }
+
+  function classesOf(live) {
+    var s = twin(live) || live;
+    return Array.prototype.slice.call(s.classList);
+  }
+
+  /*
+   * Copy the content of a live element into its source element. Elements are
+   * matched by id; elements without id were made by the editing itself (kept,
+   * keepNew says which) or by the site's scripts (left out).
+   */
+  function poolOf(srcRoot) {
+    var pool = { ids: {}, used: {} };
+    if (srcRoot) $$('[' + ID + ']', srcRoot).forEach(function (n) { pool.ids[n.getAttribute(ID)] = n; });
+    return pool;
+  }
+
+  function convert(c, pool, keepNew) {
+    if (c.nodeType === 3) return state.src.createTextNode(c.nodeValue);
+    if (c.nodeType === 8) return state.src.createComment(c.nodeValue);
+    if (c.nodeType !== 1) return null;
+    if (c.tagName === 'SCRIPT') {
+      var sidx = c.getAttribute('data-wse-sidx') || (isPlaceholder(c) ? c.getAttribute('data-wse-idx') : null);
+      if (sidx !== null) return placeholder(sidx);
+      return keepNew(c) ? state.src.importNode(c, true) : null;
+    }
+    var id = c.getAttribute(ID);
+    var s;
+    if (id && pool.ids[id] && !pool.used[id]) {
+      pool.used[id] = true;
+      s = pool.ids[id].cloneNode(false);
+    } else if (id || keepNew(c)) {
+      s = state.src.importNode(c, false);
+      s.removeAttribute('contenteditable');
+      c.setAttribute(ID, newId(s));
+    } else {
+      return null; // made by a script of the site
+    }
+    syncChildren(c, s, pool, keepNew);
+    return s;
+  }
+
+  function syncChildren(live, src, pool, keepNew) {
+    while (src.firstChild) src.removeChild(src.firstChild);
+    Array.prototype.forEach.call(live.childNodes, function (c) {
+      var s = convert(c, pool, keepNew);
+      if (s) src.appendChild(s);
+    });
+  }
 
   // ------------------------------------------------------------ start screen
 
@@ -140,7 +316,9 @@
       var list = $('#recent');
       list.innerHTML = '';
       (data.recent || []).forEach(function (path) {
-        list.appendChild(el('li', {}, [el('button', { 'class': 'link', text: path, onclick: function () { openFolder(path); } })]));
+        var name = path.replace(/[\/\\]+$/, '').split(/[\/\\]/).pop();
+        list.appendChild(el('li', {}, [el('button', { 'class': 'recent-item', title: path, onclick: function () { openFolder(path); } },
+          [icon('folder'), el('b', { text: name }), el('span', { text: path })])]));
       });
       $('#recent-wrap').hidden = !(data.recent || []).length;
       $('#choose-folder').hidden = data.platform !== 'darwin';
@@ -201,11 +379,21 @@
   function loadPage(path) {
     deselect();
     state.page = path;
+    state.doc = null;
+    state.win = null;
     $('#page-select').value = path;
+    $('#loading').hidden = false;
     api('/api/page?path=' + encodeURIComponent(path)).then(function (data) {
       splitSource(data.source, data.scripts);
-      frame.onload = setupFrame;
-      frame.src = '/site/' + encodePath(path) + '?edit=1';
+      buildSource(data.source, data.scripts);
+      var styleEl = state.src.getElementById(S.STYLE_ID);
+      state.model = S.parse(styleEl ? styleEl.textContent : '');
+      state.history = [];
+      state.hIndex = -1;
+      commit();
+      state.savedKey = currentKey();
+      updateDirty();
+      render();
     }).catch(fail);
   }
 
@@ -231,6 +419,7 @@
     state.entities = {};
     state.asciiOnly = false;
     state.bodyTrail = '';
+    state.bareAttrs = {};
     state.wholeDoc = !open;
     if (open) {
       var bodyStart = open.index + open[0].length;
@@ -240,10 +429,23 @@
       var bodySource = source.slice(bodyStart, bodyEnd);
       state.bodyTrail = /\s*$/.exec(bodySource)[0];
       learnEntities(bodySource);
+      learnBareAttributes(bodySource);
       scripts.forEach(function (s, i) {
         if (s.start < bodyStart || s.start >= bodyEnd) state.dropScripts[i] = true;
       });
     }
+  }
+
+  /* Parse the page without running scripts: the source copy. */
+  function buildSource(source, scripts) {
+    var html = source;
+    for (var i = scripts.length - 1; i >= 0; i--) {
+      html = html.slice(0, scripts[i].start) + '<script type="text/x-wse-off" data-wse-idx="' + i + '"></script>' +
+        html.slice(scripts[i].end);
+    }
+    state.src = new DOMParser().parseFromString(html, 'text/html');
+    state.nextId = 1;
+    annotate(state.src.body);
   }
 
   /*
@@ -264,6 +466,39 @@
     });
   }
 
+  /*
+   * The browser writes a bare attribute such as "data-tabs" or "defer" as
+   * data-tabs="". Write those back bare: known boolean attributes always,
+   * other ones when the page itself writes them bare.
+   */
+  var BOOLEAN_ATTRS = ('allowfullscreen async autofocus autoplay checked controls default defer disabled ' +
+    'formnovalidate hidden inert ismap itemscope loop multiple muted nomodule novalidate open playsinline ' +
+    'readonly required reversed selected').split(' ');
+
+  function learnBareAttributes(bodySource) {
+    state.bareAttrs = {};
+    BOOLEAN_ATTRS.forEach(function (a) { state.bareAttrs[a] = true; });
+    var tagRe = /<[a-zA-Z][^\s\/>]*([^>]*)>/g, attrRe = /([^\s="'\/>]+)(\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g, m, a;
+    while ((m = tagRe.exec(bodySource))) {
+      attrRe.lastIndex = 0;
+      while ((a = attrRe.exec(m[1]))) {
+        if (!a[2]) state.bareAttrs[a[1].toLowerCase()] = true;
+      }
+    }
+  }
+
+  function bareAttributes(html) {
+    return html.split(/(<(style|script|noscript)\b[\s\S]*?<\/\2\s*>)/i).map(function (part, i) {
+      if (i % 3 === 1) return part;
+      if (i % 3 === 2) return '';
+      return part.replace(/<[a-zA-Z][^\s\/>]*\s[^>]*>/g, function (tag) {
+        return tag.replace(/ ([a-zA-Z_:][-\w:.]*)=""(?=[\s>\/])/g, function (m, name) {
+          return state.bareAttrs[name.toLowerCase()] ? ' ' + name : m;
+        });
+      });
+    }).join('');
+  }
+
   function keepEntities(html) {
     var map = state.entities || {};
     var chars = Object.keys(map).map(function (c) { return c.replace(/[\\^\]\-]/g, '\\$&'); }).join('');
@@ -278,89 +513,184 @@
     }).join('');
   }
 
-  function setupFrame() {
-    var doc = frame.contentDocument;
-    state.doc = doc;
-    state.win = frame.contentWindow;
-    state.styleEl = doc.getElementById(S.STYLE_ID);
-    if (!state.styleEl) {
-      state.styleEl = doc.createElement('style');
-      state.styleEl.id = S.STYLE_ID;
-      (doc.head || doc.documentElement).appendChild(state.styleEl);
+  // ------------------------------------------------------------ the live view
+
+  var HOOK = '<script data-wse-hook>try{parent.WSE_hook(window)}catch(e){}</script>';
+  var renderSeq = 0;
+  var pendingRender = null;
+
+  /* The page as the live view shows it: source copy, real scripts, editor hook. */
+  function renderHtml() {
+    var css = S.serialize(state.model);
+    var html;
+    if (state.wholeDoc) {
+      syncWholeDocStyle(css);
+      html = '<!DOCTYPE html>\n' + restoreScripts(state.src.documentElement.outerHTML, true);
+    } else {
+      html = headWithStyles(state.prefix, css) + restoreScripts(state.src.body.innerHTML, true) + state.suffix;
     }
-    state.model = S.parse(state.styleEl.textContent);
-    writeStyles();
+    // The hook runs before any script of the site, so the editor's mouse
+    // handling comes first.
+    var m = /<head\b[^>]*>/i.exec(html) || /<html\b[^>]*>/i.exec(html) || /<!doctype[^>]*>/i.exec(html);
+    var at = m ? m.index + m[0].length : 0;
+    return html.slice(0, at) + HOOK + html.slice(at);
+  }
 
-    // Editor-only helper styles, removed again before saving.
-    var helper = doc.createElement('style');
-    helper.id = 'wse-helper';
-    helper.textContent = 'body *{cursor:grab}[contenteditable],[contenteditable] *{outline:none;cursor:text}';
-    doc.head.appendChild(helper);
+  /* Show the source copy in the live view. after() runs once it is shown. */
+  function render(after) {
+    var seq = ++renderSeq;
+    var html = renderHtml();
+    return api('/api/render', { path: state.page, html: html }).then(function () {
+      if (seq !== renderSeq) return;
+      var spare = state.doc ? frames[frames[0] === state.frame ? 1 : 0] : state.frame;
+      pendingRender = { seq: seq, frame: spare, after: after || null, done: false };
+      spare.src = '/site/' + encodePath(state.page) + '?wse-render=' + seq;
+    }).catch(fail);
+  }
 
-    doc.addEventListener('mouseover', onFrameOver, true);
-    doc.addEventListener('mouseleave', function () { state.hovered = null; }, true);
-    doc.addEventListener('mousedown', onFrameMouseDown, true);
-    doc.addEventListener('click', onFrameClick, true);
-    doc.addEventListener('dblclick', onFrameDblClick, true);
-    doc.addEventListener('submit', function (e) { e.preventDefault(); }, true);
-    doc.addEventListener('keydown', onKey, true);
-    doc.addEventListener('paste', onPaste, true);
-    doc.addEventListener('dragstart', function (e) { if (!state.editing) e.preventDefault(); }, true);
+  /* Called by the hook script at the top of every page the live view loads. */
+  window.WSE_hook = function (win) {
+    var frame = frames.filter(function (f) { return f.contentWindow === win; })[0];
+    if (!frame) return;
+    attachFrame(win);
+    var swap = function () { swapIn(frame); };
+    win.addEventListener('DOMContentLoaded', function () { setTimeout(swap, 1500); });
+    win.addEventListener('load', swap);
+  };
 
-    state.history = [];
-    state.hIndex = -1;
-    commit();
-    state.savedKey = currentKey();
-    updateDirty();
+  function swapIn(frame) {
+    var p = pendingRender;
+    if (!p || p.done || p.frame !== frame) return;
+    p.done = true;
+    pendingRender = null;
+    state.shownSeq = p.seq;
+    var old = state.frame;
+    var oldWin = state.doc ? state.win : null;
+    var win = frame.contentWindow;
+    if (oldWin) {
+      try { win.scrollTo({ left: oldWin.scrollX, top: oldWin.scrollY, behavior: 'instant' }); } catch (e) { /* ignore */ }
+    }
+    state.frame = frame;
+    state.win = win;
+    state.doc = frame.contentDocument;
+    state.styleEl = state.doc.getElementById(S.STYLE_ID);
+    if (!state.styleEl) {
+      state.styleEl = state.doc.createElement('style');
+      state.styleEl.id = S.STYLE_ID;
+      (state.doc.head || state.doc.documentElement).appendChild(state.styleEl);
+    }
+    frame.classList.add('active');
+    if (old !== frame) {
+      old.classList.remove('active');
+      setTimeout(function () { if (old !== state.frame) old.src = 'about:blank'; }, 100);
+    }
+    $('#loading').hidden = true;
+    state.hovered = null;
+    state.selected = liveById(state.selectedId);
     renderPanels();
+    renderLayers();
+    if (p.after) p.after();
   }
 
   function writeStyles() {
     if (state.styleEl) state.styleEl.textContent = S.serialize(state.model);
   }
 
-  // ------------------------------------------------------------ frame events
-
-  function selectable(node) {
-    if (!node || node.nodeType !== 1) return null;
-    var body = state.doc.body;
-    while (node && node !== body && node.closest && node.closest('svg') && node.tagName.toLowerCase() !== 'svg') {
-      node = node.parentElement; // select the whole icon, not its paths
-    }
-    if (!node || node === body || node === state.doc.documentElement || !body.contains(node)) return null;
-    return node;
+  function helperCss() {
+    return state.interact ? '' : 'body *{cursor:grab}[contenteditable],[contenteditable] *{outline:none;cursor:text}';
   }
 
-  function onFrameOver(e) {
-    state.hovered = selectable(e.target);
+  // ------------------------------------------------------------ live view events
+
+  function attachFrame(win) {
+    var doc = win.document;
+    function active() { return win === state.win; }
+    function editingHere(e) { return state.editing && state.editing.contains(e.target); }
+
+    // Editor-only helper styles; they never reach the saved page.
+    var helper = doc.createElement('style');
+    helper.id = 'wse-helper';
+    helper.textContent = helperCss();
+    (doc.head || doc.documentElement).appendChild(helper);
+
+    win.addEventListener('mousemove', function (e) { if (active()) onDragMove(e); }, true);
+    win.addEventListener('mouseover', function (e) {
+      if (active() && !state.interact && !drag.active) state.hovered = selectable(e.target);
+    }, true);
+    win.addEventListener('mouseout', function (e) {
+      if (active() && !e.relatedTarget && !drag.active) state.hovered = null;
+    }, true);
+    win.addEventListener('mousedown', function (e) {
+      if (!active() || state.interact) return;
+      e.stopPropagation();
+      onFrameMouseDown(e);
+    }, true);
+    win.addEventListener('mouseup', function (e) {
+      if (!active()) return;
+      onDragEnd(e);
+      if (!state.interact) e.stopPropagation();
+    }, true);
+    // Keep the site's own scripts (sliders, swipe handlers...) from reacting while editing.
+    ['pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach(function (type) {
+      win.addEventListener(type, function (e) { if (active() && !state.interact) e.stopPropagation(); }, true);
+    });
+    win.addEventListener('click', function (e) {
+      if (!active()) return;
+      if (state.interact) {
+        // Try menus and buttons, but stay on this page.
+        var a = e.target.closest && e.target.closest('a[href]');
+        var href = a ? a.getAttribute('href') : '';
+        if (a && !/^(#|javascript:)/i.test(href)) e.preventDefault();
+        return;
+      }
+      e.stopPropagation();
+      e.preventDefault();
+      if (!editingHere(e)) select(selectable(e.target));
+    }, true);
+    win.addEventListener('dblclick', function (e) {
+      if (!active() || state.interact) return;
+      e.stopPropagation();
+      e.preventDefault();
+      onFrameDblClick(e);
+    }, true);
+    win.addEventListener('submit', function (e) { e.preventDefault(); }, true);
+    win.addEventListener('keydown', function (e) {
+      if (!active()) return;
+      if (state.interact) {
+        if (e.key === 'Escape') setInteract(false);
+        return;
+      }
+      onKey(e);
+      e.stopPropagation();
+    }, true);
+    win.addEventListener('paste', function (e) { if (active()) onPaste(e); }, true);
+    win.addEventListener('dragstart', function (e) { if (active() && !state.editing) e.preventDefault(); }, true);
+  }
+
+  /* The element a click selects: the nearest element that exists in the source. */
+  function selectable(node) {
+    if (node && node.nodeType !== 1) node = node.parentElement;
+    if (!node || !state.doc) return null;
+    var body = state.doc.body;
+    var svg = node.closest && node.closest('svg');
+    if (svg) node = svg; // select the whole icon, not its paths
+    while (node && node !== body && !node.hasAttribute(ID)) node = node.parentElement;
+    if (!node || node === body || !body || !body.contains(node)) return null;
+    return node;
   }
 
   function onFrameMouseDown(e) {
     if (state.editing && !state.editing.contains(e.target)) finishEditing();
-    // Pressing on any element and moving the mouse drags it. Inside the
-    // selected element the selected element is dragged, so after choosing a
-    // parent (breadcrumbs or the ⤒ button) the whole box can be moved.
+    if (state.editing || e.button !== 0) return;
+    // Pressing on an element and moving the mouse drags that element.
     var target = selectable(e.target);
-    if (e.button === 0 && !state.editing && target) {
+    if (target) {
       e.preventDefault(); // no text selection while dragging; click and double-click still work
-      var node = state.selected && state.selected.contains(target) ? state.selected : target;
-      beginDrag(e, { node: node }, 'frame');
+      beginDrag(e, { node: target });
     }
-  }
-
-  function onFrameClick(e) {
-    if (state.editing && state.editing.contains(e.target)) {
-      e.preventDefault(); // keep links from navigating while typing
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    select(selectable(e.target));
   }
 
   function onFrameDblClick(e) {
-    e.preventDefault();
-    e.stopPropagation();
     var target = selectable(e.target);
     if (!target) return;
     if (target.tagName === 'IMG') {
@@ -382,10 +712,31 @@
     state.doc.execCommand('insertText', false, text);
   }
 
+  function setInteract(on) {
+    if (on && state.editing) finishEditing();
+    state.interact = on;
+    if (on) deselect();
+    $('#btn-interact').classList.toggle('on', on);
+    $('#frame-wrap').classList.toggle('interact', on);
+    frames.forEach(function (f) {
+      var h = f.contentDocument && f.contentDocument.getElementById('wse-helper');
+      if (h) h.textContent = helperCss();
+    });
+    updateStatus();
+  }
+
+  $('#btn-interact').addEventListener('click', function () { setInteract(!state.interact); });
+
+  function updateStatus() {
+    var chip = $('#status-chip');
+    chip.textContent = state.interact ? t('interactOn') : t('scriptsOn');
+    chip.className = 'status-chip' + (state.interact ? ' interact' : '');
+  }
+
   // ------------------------------------------------------------ overlay
 
   function placeBox(box, node) {
-    if (!node || !state.doc || !state.doc.contains(node)) {
+    if (!node || !state.doc || !state.doc.contains(node) || state.interact) {
       box.hidden = true;
       return null;
     }
@@ -402,26 +753,34 @@
     if (!r) { bar.hidden = true; return; }
     bar.hidden = false;
     var wrap = $('#frame-wrap').getBoundingClientRect();
-    var h = bar.offsetHeight || 30;
-    var top = r.top - h - 4;
-    if (top < 2) top = r.bottom + 4;
-    if (top + h > wrap.height) top = Math.max(2, r.top + 2);
-    var left = Math.min(Math.max(2, r.left), Math.max(2, wrap.width - bar.offsetWidth - 2));
+    var h = bar.offsetHeight || 32;
+    var top = r.top - h - 6;
+    if (top < 4) top = r.bottom + 6;
+    if (top + h > wrap.height - 4) top = Math.max(4, r.top + 4);
+    var left = Math.min(Math.max(4, r.left), Math.max(4, wrap.width - bar.offsetWidth - 4));
     bar.style.top = top + 'px';
     bar.style.left = left + 'px';
   }
 
+  var lastHover = null;
   function tick() {
-    if (state.selected && !(state.doc && state.doc.contains(state.selected))) deselect();
+    if (state.selected && !(state.doc && state.doc.contains(state.selected))) {
+      state.selected = liveById(state.selectedId);
+      if (!state.selected) deselect();
+    }
     var hover = state.hovered !== state.selected ? state.hovered : null;
     placeBox($('#hover-box'), hover);
+    if (hover !== lastHover) {
+      lastHover = hover;
+      $('#hover-tag').textContent = hover ? label(hover) : '';
+    }
     var r = placeBox($('#select-box'), state.selected);
     if (state.editing) {
       $('#el-toolbar').hidden = true;
       placeToolbar($('#rte-toolbar'), r);
     } else {
       $('#rte-toolbar').hidden = true;
-      placeToolbar($('#el-toolbar'), r);
+      placeToolbar($('#el-toolbar'), drag.active ? null : r);
     }
     requestAnimationFrame(tick);
   }
@@ -433,23 +792,27 @@
     var tag = node.tagName.toLowerCase();
     var name = t('tag_' + tag);
     if (name === 'tag_' + tag) name = '<' + tag + '>';
-    var cls = Array.prototype.filter.call(node.classList, function (c) { return !/^wse-/.test(c); })[0];
+    var classes = classesOf(node).filter(function (c) { return !/^wse-/.test(c); });
     if (node.id) name += ' #' + node.id;
-    else if (cls) name += ' .' + cls;
+    else if (classes[0]) name += ' .' + classes[0];
     return name;
   }
 
   function select(node) {
     if (state.editing && node !== state.editing) finishEditing();
     state.selected = node || null;
+    state.selectedId = idOf(node);
     state.target = 'self';
     renderPanels();
+    renderLayers();
   }
 
   function deselect() {
     if (state.editing) finishEditing();
     state.selected = null;
+    state.selectedId = null;
     renderPanels();
+    renderLayers();
   }
 
   function renderCrumbs() {
@@ -457,26 +820,28 @@
     nav.innerHTML = '';
     var node = state.selected;
     var chain = [];
-    while (node && node !== state.doc.body) { chain.unshift(node); node = node.parentElement; }
+    while (node && state.doc && node !== state.doc.body) {
+      if (node.hasAttribute(ID)) chain.unshift(node);
+      node = node.parentElement;
+    }
     chain.forEach(function (n, i) {
-      if (i) nav.appendChild(el('span', { 'class': 'crumb-sep', text: '›' }));
+      if (i) nav.appendChild(el('span', { 'class': 'crumb-sep' }, [icon('chevron')]));
       nav.appendChild(el('button', { 'class': 'crumb' + (n === state.selected ? ' current' : ''), text: label(n), onclick: function () { select(n); } }));
     });
-    if (!chain.length) nav.appendChild(el('span', { 'class': 'hint', text: t('scriptsOff') }));
+    if (!chain.length) nav.appendChild(el('span', { 'class': 'hint', text: t('crumbsHint') }));
   }
 
   function renderPanels() {
     var has = !!state.selected;
     $('#empty-note').hidden = has;
-    $$('.tab-body').forEach(function (b) { b.classList.toggle('disabled', !has); });
-    if (state.doc) renderCrumbs();
+    renderCrumbs();
     if (!has) {
       $('#tab-style').hidden = true;
       $('#tab-settings').hidden = true;
       $('#tab-html').hidden = true;
       return;
     }
-    var tab = $('.tab.active').getAttribute('data-tab');
+    var tab = $('.rtab.active').getAttribute('data-tab');
     $('#tab-style').hidden = tab !== 'style';
     $('#tab-settings').hidden = tab !== 'settings';
     $('#tab-html').hidden = tab !== 'html';
@@ -486,31 +851,81 @@
     $('#el-toolbar [data-act="toggle"]').hidden = !accordionOf(state.selected);
     refreshStylePanel();
     renderSettings();
-    $('#html-code').value = restoreScripts(state.selected.outerHTML);
+    var s = twin(state.selected);
+    $('#html-code').value = s ? restoreScripts(stripIds(s.outerHTML)) : '';
   }
 
-  $$('.tab').forEach(function (tab) {
+  $$('.rtab').forEach(function (tab) {
     tab.addEventListener('click', function () {
-      $$('.tab').forEach(function (x) { x.classList.toggle('active', x === tab); });
+      $$('.rtab').forEach(function (x) { x.classList.toggle('active', x === tab); });
       renderPanels();
     });
   });
 
-  // ------------------------------------------------------------ element actions
+  $$('.ltab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      $$('.ltab').forEach(function (x) { x.classList.toggle('active', x === tab); });
+      $('#ltab-add').hidden = tab.getAttribute('data-ltab') !== 'add';
+      $('#ltab-layers').hidden = tab.getAttribute('data-ltab') !== 'layers';
+      renderLayers();
+    });
+  });
+
+  // ------------------------------------------------------------ changes to the page
+
+  /*
+   * After a structural change of the source copy: remember it for undo and
+   * rebuild the live view. opts.check warns if the element ends up hidden.
+   */
+  function changed(selectId, opts) {
+    opts = opts || {};
+    if (state.editing) finishEditing();
+    state.selectedId = selectId || null;
+    commit();
+    renderLayers();
+    return render(function () {
+      var node = liveById(selectId);
+      if (node && opts.reveal !== false) revealNode(node, false);
+      // Some pages fade elements in; look again a moment later before warning.
+      if (node && opts.check) setTimeout(function () { revealNode(liveById(selectId), true); }, 400);
+      if (opts.then) opts.then(node);
+    });
+  }
+
+  function revealNode(node, warnIfHidden) {
+    if (!node || !state.doc || !state.doc.contains(node)) return;
+    var r = node.getBoundingClientRect();
+    var visible = node.getClientRects().length > 0 && r.width * r.height > 0 &&
+      state.win.getComputedStyle(node).visibility !== 'hidden';
+    if (!visible) {
+      if (warnIfHidden) toast(t('droppedHidden'), true, { label: t('undo'), run: undo });
+      return;
+    }
+    if (!warnIfHidden && (r.bottom < 0 || r.top > state.win.innerHeight)) node.scrollIntoView({ block: 'center' });
+  }
 
   function newStyleClass() {
     return 'wse-' + Math.random().toString(36).slice(2, 8);
   }
 
   function ownClass(node) {
-    return Array.prototype.filter.call(node.classList, function (c) { return /^wse-[a-z0-9]+$/.test(c); })[0];
+    return classesOf(node).filter(function (c) { return /^wse-[a-z0-9]+$/.test(c); })[0];
+  }
+
+  function srcElementSibling(s, dir) {
+    var n = dir < 0 ? s.previousSibling : s.nextSibling;
+    while (n && (n.nodeType !== 1 || isPlaceholder(n))) n = dir < 0 ? n.previousSibling : n.nextSibling;
+    return n;
   }
 
   function act(name) {
     var node = state.selected;
     if (!node) return;
+    var s = twin(node);
     if (name === 'parent') {
-      if (node.parentElement && node.parentElement !== state.doc.body) select(node.parentElement);
+      var p = node.parentElement;
+      while (p && p !== state.doc.body && !p.hasAttribute(ID)) p = p.parentElement;
+      if (p && p !== state.doc.body) select(p);
       return;
     }
     if (name === 'edit') {
@@ -520,19 +935,23 @@
     }
     if (name === 'image') return changeImage();
     if (name === 'toggle') return toggleAccordion(accordionOf(node));
-    if (name === 'drag') return; // handled by mousedown, see drag and drop
+    if (name === 'drag' || !s) return; // drag is handled on mousedown
     if (name === 'up' || name === 'down') {
-      var sib = name === 'up' ? node.previousElementSibling : node.nextElementSibling;
-      while (sib && isPlaceholder(sib)) sib = name === 'up' ? sib.previousElementSibling : sib.nextElementSibling;
+      var sib = srcElementSibling(s, name === 'up' ? -1 : 1);
       if (!sib) return;
-      if (name === 'up') sib.before(node); else sib.after(node);
-      commit();
+      var parent = s.parentNode;
+      var before = name === 'up' ? sib : srcElementSibling(sib, 1);
+      srcRemove(s);
+      srcInsert(parent, s, before || (name === 'down' ? sib.nextSibling : null));
+      changed(idOf(s));
       return;
     }
     if (name === 'duplicate') {
-      var copy = node.cloneNode(true);
-      copy.removeAttribute('id');
-      $$('[id]', copy).forEach(function (n) { n.removeAttribute('id'); });
+      var copy = s.cloneNode(true);
+      [copy].concat($$('*', copy)).forEach(function (n) {
+        n.removeAttribute('id'); // ids must stay unique
+        if (n.hasAttribute(ID)) newId(n);
+      });
       var own = ownClass(node);
       if (own) {
         // The copy gets its own styles, so changing one does not change the other.
@@ -544,16 +963,16 @@
         });
         writeStyles();
       }
-      node.after(copy);
-      select(copy);
-      commit();
+      srcInsert(s.parentNode, copy, s.nextSibling);
+      changed(idOf(copy));
       return;
     }
     if (name === 'delete') {
-      var next = node.nextElementSibling || node.previousElementSibling || node.parentElement;
-      node.remove();
-      select(next && next !== state.doc.body && !isPlaceholder(next) ? next : null);
-      commit();
+      var next = srcElementSibling(s, 1) || srcElementSibling(s, -1);
+      if (!next && s.parentNode !== state.src.body) next = s.parentNode;
+      srcRemove(s);
+      state.selected = null;
+      changed(idOf(next), { reveal: false });
     }
   }
 
@@ -567,13 +986,9 @@
 
   function toggleAccordion(details) {
     if (!details) return;
-    details.open = !details.open;
+    setAttr(details, 'open', details.open ? null : '');
     commit();
     renderPanels();
-  }
-
-  function isPlaceholder(node) {
-    return node.tagName === 'SCRIPT' && node.getAttribute('type') === 'text/x-wse-off';
   }
 
   $$('#el-toolbar button').forEach(function (b) {
@@ -596,11 +1011,11 @@
   function textTarget(node) {
     if (!node || /^(IMG|VIDEO|AUDIO|IFRAME|SVG|svg|HR|BR|INPUT|SELECT|TEXTAREA|SCRIPT|PICTURE|CANVAS|OBJECT|EMBED)$/.test(node.tagName)) return null;
     // Typing in a word inside a paragraph edits the whole paragraph.
-    while (node.parentElement && node.parentElement !== state.doc.body && isInline(node)) {
+    while (node.parentElement && node.parentElement !== state.doc.body && isInline(node) && node.parentElement.hasAttribute(ID)) {
       node = node.parentElement;
     }
     var blockChild = Array.prototype.some.call(node.children, function (c) {
-      return !isInline(c) && c.tagName !== 'BR' && !isPlaceholder(c);
+      return !isInline(c) && c.tagName !== 'BR' && c.tagName !== 'SCRIPT';
     });
     if (hasText(node) || (!blockChild && node.textContent.trim())) return node;
     if (!blockChild && !node.children.length) return node; // empty element
@@ -612,7 +1027,9 @@
     if (state.editing) finishEditing();
     state.editing = node;
     state.editingAttr = node.getAttribute('contenteditable');
-    state.editingHadStyle = node.hasAttribute('style');
+    // Elements without id inside were made by a script of the site: never saved.
+    state.editMadeByScript = new Set($$('*', node).filter(function (n) { return !n.hasAttribute(ID); }));
+    state.editPool = poolOf(twin(node));
     node.setAttribute('contenteditable', 'true');
     node.focus();
     var doc = state.doc;
@@ -626,20 +1043,27 @@
     }
     sel.removeAllRanges();
     sel.addRange(range);
+    $('#frame-wrap').classList.add('typing');
+  }
+
+  function keepTyped(n) {
+    return !state.editMadeByScript.has(n);
   }
 
   function finishEditing() {
     var node = state.editing;
     if (!node) return;
     state.editing = null;
+    $('#frame-wrap').classList.remove('typing');
     if (state.editingAttr === null) node.removeAttribute('contenteditable');
     else node.setAttribute('contenteditable', state.editingAttr);
-    // Chrome sometimes leaves an empty style="" behind on edited text.
-    if (!state.editingHadStyle && node.getAttribute('style') === '') node.removeAttribute('style');
     var sel = state.doc.getSelection();
     if (sel) sel.removeAllRanges();
+    var s = twin(node);
+    if (s) syncChildren(node, s, state.editPool, keepTyped);
     commit();
     renderPanels();
+    renderLayers();
   }
 
   /* Enter in a paragraph or list item starts a new one, like a word processor. */
@@ -654,7 +1078,7 @@
     rest.setStart(range.endContainer, range.endOffset);
     rest.setEnd(node, node.childNodes.length);
     var fresh = doc.createElement(node.tagName);
-    var classes = Array.prototype.filter.call(node.classList, function (c) { return !/^wse-/.test(c); });
+    var classes = classesOf(node).filter(function (c) { return !/^wse-/.test(c); });
     if (classes.length) fresh.className = classes.join(' ');
     var own = ownClass(node);
     if (own) fresh.classList.add(own);
@@ -662,7 +1086,12 @@
     if (!fresh.textContent) fresh.innerHTML = '<br>';
     if (!node.textContent && !node.querySelector('img')) node.innerHTML = '<br>';
     node.after(fresh);
+    // Put the new element into the source copy too, right after the old one.
+    var srcFresh = convert(fresh, state.editPool, function () { return true; });
+    var s = twin(node);
     finishEditing();
+    if (s && srcFresh) srcInsert(s.parentNode, srcFresh, s.nextSibling);
+    commit();
     select(fresh);
     startEditing(fresh);
     var r = doc.createRange();
@@ -741,10 +1170,15 @@
     var node = state.selected;
     if (!node || node.tagName !== 'IMG') return;
     openImagePicker(function (src) {
-      node.setAttribute('src', src);
-      node.removeAttribute('srcset'); // the old responsive versions would win otherwise
-      if (node.parentElement && node.parentElement.tagName === 'PICTURE') {
-        $$('source', node.parentElement).forEach(function (s) { s.remove(); });
+      setAttr(node, 'src', src);
+      setAttr(node, 'srcset', null); // the old responsive versions would win otherwise
+      var pic = node.parentElement && node.parentElement.tagName === 'PICTURE' ? node.parentElement : null;
+      if (pic) {
+        $$('source', pic).forEach(function (srcEl) {
+          var s = twin(srcEl);
+          if (s) srcRemove(s);
+          srcEl.remove();
+        });
       }
       commit();
       renderPanels();
@@ -817,7 +1251,7 @@
   ];
 
   var SIDES = ['top', 'right', 'bottom', 'left'];
-  var controls = []; // { prop, def, set(value, placeholder), resetBtn }
+  var controls = []; // { def, set(value, placeholder), reset }
 
   /* The selector style changes go to. Creates the element's own class if needed. */
   function styleSelector(create) {
@@ -827,7 +1261,7 @@
     var own = ownClass(node);
     if (!own && create) {
       own = newStyleClass();
-      node.classList.add(own);
+      [node, twin(node)].forEach(function (n) { if (n) n.classList.add(own); });
     }
     return own ? '.' + own : null;
   }
@@ -843,15 +1277,19 @@
     if (!sel) return;
     S.set(state.model, sel, state.device, prop, value);
     if (!value && state.target === 'self' && !state.model.rules[sel]) {
-      state.selected.classList.remove(sel.slice(1)); // no styles left, drop the helper class
-      if (!state.selected.classList.length) state.selected.removeAttribute('class');
+      // No styles left: drop the helper class again.
+      [state.selected, twin(state.selected)].forEach(function (n) {
+        if (!n) return;
+        n.classList.remove(sel.slice(1));
+        if (!n.classList.length) n.removeAttribute('class');
+      });
     }
     writeStyles();
     commit();
     refreshStylePanel();
   }
 
-  function unitInput(prop, def, placeholderOnly) {
+  function unitInput(prop, def) {
     var input = el('input', { type: 'text', 'class': 'unit', spellcheck: 'false', 'data-prop': prop });
     input.addEventListener('change', function () { setStyle(prop, normalize(def, input.value)); });
     input.addEventListener('keydown', function (e) {
@@ -877,11 +1315,13 @@
     root.appendChild(el('p', { 'class': 'device-note', id: 'device-note' }));
     root.appendChild(el('label', { 'class': 'check hide-row' }, [
       el('input', { type: 'checkbox', id: 'hide-here', onchange: function (e) { setStyle('display', e.target.checked ? 'none' : ''); } }),
-      t('hideHere')
+      el('span', { text: t('hideHere') })
     ]));
 
     SECTIONS.forEach(function (sec, i) {
-      var details = el('details', { 'class': 'sec', open: i < 3 ? '' : null }, [el('summary', { text: t(sec.title) })]);
+      var details = el('details', { 'class': 'sec', open: i < 3 ? '' : null }, [
+        el('summary', {}, [el('span', { text: t(sec.title) }), icon('toggle')])
+      ]);
       sec.props.forEach(function (def) { details.appendChild(buildControl(def)); });
       root.appendChild(details);
     });
@@ -889,52 +1329,48 @@
 
   function buildControl(def) {
     var row = el('div', { 'class': 'prop prop-' + def.type });
-    var reset = el('button', { 'class': 'reset', title: t('reset'), text: '×' });
-    var lbl = el('label', { text: t(def.label) });
-    row.appendChild(lbl);
-    var field = el('div', { 'class': 'field' });
-    row.appendChild(field);
+    var reset = el('button', { 'class': 'reset', title: t('reset') }, [icon('x')]);
+    row.appendChild(el('label', { text: t(def.label) }));
+    var fieldBox = el('div', { 'class': 'field' });
+    row.appendChild(fieldBox);
     row.appendChild(reset);
     var ctl = { def: def, reset: reset };
+    reset.onclick = function () { setStyle(def.prop, ''); };
 
     if (def.type === 'unit') {
       var input = unitInput(def.prop, def);
-      field.appendChild(input);
+      fieldBox.appendChild(input);
       ctl.set = function (v, ph) { input.value = v; input.placeholder = ph; };
-      reset.onclick = function () { setStyle(def.prop, ''); };
     } else if (def.type === 'font') {
       var fin = el('input', { type: 'text', list: 'font-list', spellcheck: 'false' });
       var list = el('datalist', { id: 'font-list' }, FONTS.map(function (f) { return el('option', { value: f }); }));
       fin.addEventListener('change', function () { setStyle(def.prop, fin.value); });
-      field.appendChild(fin);
-      field.appendChild(list);
+      fieldBox.appendChild(fin);
+      fieldBox.appendChild(list);
       ctl.set = function (v, ph) { fin.value = v; fin.placeholder = ph; };
-      reset.onclick = function () { setStyle(def.prop, ''); };
     } else if (def.type === 'select') {
       var sel = el('select', {}, [el('option', { value: '', text: '–' })].concat(def.options.map(function (o) {
         return el('option', { value: o[0], text: o[1] });
       })));
       sel.addEventListener('change', function () { setStyle(def.prop, sel.value); });
-      field.appendChild(sel);
+      fieldBox.appendChild(sel);
       ctl.set = function (v, ph) {
         sel.value = v;
         sel.options[0].textContent = ph ? '– (' + ph + ')' : '–';
       };
-      reset.onclick = function () { setStyle(def.prop, ''); };
     } else if (def.type === 'color') {
       var color = el('input', { type: 'color' });
       var text = el('input', { type: 'text', 'class': 'unit', spellcheck: 'false' });
       color.addEventListener('input', function () { text.value = color.value; });
       color.addEventListener('change', function () { setStyle(def.prop, color.value); });
       text.addEventListener('change', function () { setStyle(def.prop, text.value); });
-      field.appendChild(color);
-      field.appendChild(text);
+      fieldBox.appendChild(color);
+      fieldBox.appendChild(text);
       ctl.set = function (v, ph) { color.value = rgbToHex(v || ph); text.value = v; text.placeholder = ph; };
-      reset.onclick = function () { setStyle(def.prop, ''); };
     } else if (def.type === 'buttons') {
       var btns = def.options.map(function (o) {
         var b = el('button', { 'class': 'seg', title: o[0], text: o[1], onclick: function () { setStyle(def.prop, o[0]); } });
-        field.appendChild(b);
+        fieldBox.appendChild(b);
         return b;
       });
       ctl.set = function (v, ph) {
@@ -943,27 +1379,24 @@
           b.classList.toggle('inherited', !v && def.options[i][0] === ph);
         });
       };
-      reset.onclick = function () { setStyle(def.prop, ''); };
     } else if (def.type === 'bgimage') {
       var thumb = el('span', { 'class': 'bg-thumb' });
       var choose = el('button', { 'class': 'btn small', text: t('choose'), onclick: function () {
         openImagePicker(function (src) { setStyle(def.prop, 'url("' + src + '")'); });
       } });
-      field.appendChild(thumb);
-      field.appendChild(choose);
+      fieldBox.appendChild(thumb);
+      fieldBox.appendChild(choose);
       ctl.set = function (v) {
         thumb.textContent = v ? decodeURIComponent(v.replace(/^url\(["']?|["']?\)$/g, '').split('/').pop()) : t('none');
       };
-      reset.onclick = function () { setStyle(def.prop, ''); };
     } else if (def.type === 'box') {
       var inputs = SIDES.map(function (side) {
         var sub = { prop: def.prop + '-' + side, type: 'unit' };
         var inp = unitInput(sub.prop, sub);
         inp.title = t(side);
-        field.appendChild(el('span', { 'class': 'side' }, [inp, el('small', { text: t(side) })]));
+        fieldBox.appendChild(el('span', { 'class': 'side' }, [inp, el('small', { text: t(side) })]));
         return inp;
       });
-      ctl.boxInputs = inputs;
       ctl.set = function (values, phs) {
         inputs.forEach(function (inp, i) { inp.value = values[i]; inp.placeholder = phs[i]; });
       };
@@ -983,7 +1416,7 @@
     if (!node || !state.win) return;
     // "Apply to" choices: this element, or every element sharing one of its classes.
     var apply = $('#apply-to');
-    var classes = Array.prototype.filter.call(node.classList, function (c) { return !/^wse-/.test(c); });
+    var classes = classesOf(node).filter(function (c) { return !/^wse-/.test(c); });
     apply.innerHTML = '';
     apply.appendChild(el('option', { value: 'self', text: t('thisElement') }));
     classes.forEach(function (c) { apply.appendChild(el('option', { value: c, text: t('allWithClass') + ' .' + c })); });
@@ -1022,19 +1455,21 @@
     return el('div', { 'class': 'setting' }, [el('label', { text: labelText }), input]);
   }
 
-  function attrInput(node, attr, opts) {
-    opts = opts || {};
-    var input = el('input', { type: 'text', value: node.getAttribute(attr) || '', spellcheck: 'false', list: opts.list || null });
+  function attrInput(node, attr, options) {
+    options = options || {};
+    var s = twin(node) || node;
+    var input = el('input', { type: 'text', value: s.getAttribute(attr) || '', spellcheck: 'false', list: options.list || null });
     input.addEventListener('change', function () {
       var v = input.value.trim();
       if (attr === 'class') {
         var own = ownClass(node);
         v = (v + (own ? ' ' + own : '')).trim();
       }
-      if (v) node.setAttribute(attr, v); else node.removeAttribute(attr);
-      if (attr === 'src' && node.tagName === 'IMG') node.removeAttribute('srcset');
+      setAttr(node, attr, v || null);
+      if (attr === 'src' && node.tagName === 'IMG') setAttr(node, 'srcset', null);
       commit();
       renderPanels();
+      renderLayers();
     });
     return input;
   }
@@ -1044,31 +1479,28 @@
     var node = state.selected;
     root.innerHTML = '';
     var tag = node.tagName;
+    var s = twin(node) || node;
 
     if (tag === 'A') {
       var pages = el('datalist', { id: 'page-list' }, state.site.pages.map(function (p) { return el('option', { value: relFromPage(p) }); }));
       root.appendChild(pages);
       root.appendChild(field(t('linkUrl'), attrInput(node, 'href', { list: 'page-list' })));
       var box = el('input', { type: 'checkbox' });
-      box.checked = node.getAttribute('target') === '_blank';
+      box.checked = s.getAttribute('target') === '_blank';
       box.addEventListener('change', function () {
-        if (box.checked) {
-          node.setAttribute('target', '_blank');
-          node.setAttribute('rel', 'noopener');
-        } else {
-          node.removeAttribute('target');
-          if (node.getAttribute('rel') === 'noopener') node.removeAttribute('rel');
-        }
+        setAttr(node, 'target', box.checked ? '_blank' : null);
+        if (box.checked) setAttr(node, 'rel', 'noopener');
+        else if (s.getAttribute('rel') === 'noopener') setAttr(node, 'rel', null);
         commit();
       });
-      root.appendChild(el('label', { 'class': 'check' }, [box, t('newTab')]));
+      root.appendChild(el('label', { 'class': 'check' }, [box, el('span', { text: t('newTab') })]));
     }
     var details = accordionOf(node);
     if (details) {
       var openBox = el('input', { type: 'checkbox' });
       openBox.checked = details.open;
       openBox.addEventListener('change', function () { toggleAccordion(details); });
-      root.appendChild(el('label', { 'class': 'check' }, [openBox, t('openOnLoad')]));
+      root.appendChild(el('label', { 'class': 'check' }, [openBox, el('span', { text: t('openOnLoad') })]));
     }
     if (tag === 'IMG') {
       var row = el('div', { 'class': 'row' }, [attrInput(node, 'src'),
@@ -1080,59 +1512,89 @@
       root.appendChild(field(t('source'), attrInput(node, 'src')));
     }
     var classInput = attrInput(node, 'class');
-    classInput.value = Array.prototype.filter.call(node.classList, function (c) { return !/^wse-/.test(c); }).join(' ');
+    classInput.value = classesOf(node).filter(function (c) { return !/^wse-/.test(c); }).join(' ');
     root.appendChild(field(t('classes'), classInput));
     root.appendChild(field(t('id'), attrInput(node, 'id')));
   }
 
   // ------------------------------------------------------------ HTML panel
 
+  /* Parse HTML into source-copy nodes with fresh ids. */
+  function parseFragment(html) {
+    var tpl = state.src.createElement('template');
+    tpl.innerHTML = html;
+    var nodes = Array.prototype.slice.call(state.src.importNode(tpl.content, true).childNodes);
+    nodes.forEach(function (n) {
+      if (n.nodeType !== 1) return;
+      [n].concat($$('*', n)).forEach(function (x) { x.removeAttribute(ID); });
+      annotate(n);
+    });
+    return nodes;
+  }
+
   $('#html-apply').addEventListener('click', function () {
-    var node = state.selected;
-    if (!node) return;
-    var tpl = state.doc.createElement('template');
-    tpl.innerHTML = $('#html-code').value;
-    var nodes = Array.prototype.slice.call(tpl.content.childNodes);
+    var s = twin(state.selected);
+    if (!s) return;
+    var nodes = parseFragment($('#html-code').value);
     if (!nodes.length) return;
     var first = nodes.filter(function (n) { return n.nodeType === 1; })[0];
-    node.replaceWith.apply(node, nodes);
-    select(first ? state.doc.body.contains(first) && first : null);
-    commit();
+    s.replaceWith.apply(s, nodes);
+    changed(idOf(first));
   });
 
   // ------------------------------------------------------------ blocks
 
   var BLOCKS = [
-    { key: 'blkHeading', icon: 'H', html: function () { return '<h2>' + t('newHeading') + '</h2>'; } },
-    { key: 'blkParagraph', icon: '¶', html: function () { return '<p>' + t('newParagraph') + '</p>'; } },
-    { key: 'blkImage', icon: '🖼', image: true, html: function () { return '<img src="" alt="" style="max-width:100%;height:auto">'; } },
-    { key: 'blkButton', icon: '▭', html: function () {
+    { key: 'blkHeading', thumb: 'heading', html: function () { return '<h2>' + t('newHeading') + '</h2>'; } },
+    { key: 'blkParagraph', thumb: 'text', html: function () { return '<p>' + t('newParagraph') + '</p>'; } },
+    { key: 'blkImage', thumb: 'image', image: true, html: function () { return '<img src="" alt="" style="max-width:100%;height:auto">'; } },
+    { key: 'blkButton', thumb: 'button', html: function () {
       return '<a href="#" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none">' + t('newButton') + '</a>';
     } },
-    { key: 'blkLink', icon: '🔗', html: function () { return '<a href="#">' + t('newLink') + '</a>'; } },
-    { key: 'blkList', icon: '•', html: function () {
+    { key: 'blkLink', thumb: 'link', html: function () { return '<a href="#">' + t('newLink') + '</a>'; } },
+    { key: 'blkList', thumb: 'list', html: function () {
       return '<ul>\n  <li>' + t('newItem') + '</li>\n  <li>' + t('newItem') + '</li>\n</ul>';
     } },
-    { key: 'blkSection', icon: '▤', html: function () {
+    { key: 'blkSection', thumb: 'section', html: function () {
       return '<section style="padding:48px 20px">\n  <h2>' + t('newHeading') + '</h2>\n  <p>' + t('newParagraph') + '</p>\n</section>';
     } },
-    { key: 'blkTwoCols', icon: '◫', html: function () { return columns(2); } },
-    { key: 'blkThreeCols', icon: '▥', html: function () { return columns(3); } },
-    { key: 'blkDivider', icon: '―', html: function () { return '<hr>'; } },
-    { key: 'blkSpacer', icon: '↕', html: function () { return '<div style="height:40px"></div>'; } },
-    { key: 'blkBox', icon: '▢', html: function () { return box(); } },
-    { key: 'blkRow', icon: '▢▢', html: function () {
+    { key: 'blkBox', thumb: 'box', html: function () { return box(); } },
+    { key: 'blkRow', thumb: 'row', html: function () {
       return '<div style="display:flex;flex-wrap:wrap;gap:24px">\n' + box('flex:1 1 220px;') + '\n' +
         box('flex:1 1 220px;') + '\n' + box('flex:1 1 220px;') + '\n</div>';
     } },
-    { key: 'blkAccordion', icon: '☰', html: function () {
+    { key: 'blkTwoCols', thumb: 'cols2', html: function () { return columns(2); } },
+    { key: 'blkThreeCols', thumb: 'cols3', html: function () { return columns(3); } },
+    { key: 'blkAccordion', thumb: 'accordion', html: function () {
       var out = '<div style="display:flex;flex-direction:column;gap:8px">\n';
       for (var i = 1; i <= 3; i++) out += accordionItem(t('newQuestion') + ' ' + i, i === 1) + '\n';
       return out + '</div>';
     } },
-    { key: 'blkAccordionItem', icon: '▸', html: function () { return accordionItem(t('newQuestion'), true); } },
-    { key: 'blkVideo', icon: '▶', video: true }
+    { key: 'blkAccordionItem', thumb: 'accitem', html: function () { return accordionItem(t('newQuestion'), true); } },
+    { key: 'blkDivider', thumb: 'divider', html: function () { return '<hr>'; } },
+    { key: 'blkSpacer', thumb: 'spacer', html: function () { return '<div style="height:40px"></div>'; } },
+    { key: 'blkVideo', thumb: 'video', video: true }
   ];
+
+  /* Small wireframe pictures of the blocks (48 x 32). */
+  var THUMBS = {
+    heading: '<rect x="8" y="10" width="32" height="6" rx="2" class="f"/><rect x="8" y="20" width="22" height="3" rx="1.5"/>',
+    text: '<rect x="8" y="8" width="32" height="3" rx="1.5"/><rect x="8" y="14" width="32" height="3" rx="1.5"/><rect x="8" y="20" width="24" height="3" rx="1.5"/>',
+    image: '<rect x="8" y="6" width="32" height="20" rx="3"/><circle cx="17" cy="13" r="2.5" class="f"/><path d="M8 24l10-8 7 6 5-3 10 7" class="s"/>',
+    button: '<rect x="10" y="10" width="28" height="12" rx="6" class="f"/>',
+    link: '<rect x="8" y="14" width="32" height="3" rx="1.5" class="f"/><rect x="8" y="19" width="32" height="1"/>',
+    list: '<circle cx="11" cy="10" r="2" class="f"/><rect x="16" y="9" width="24" height="3" rx="1.5"/><circle cx="11" cy="17" r="2" class="f"/><rect x="16" y="16" width="24" height="3" rx="1.5"/><circle cx="11" cy="24" r="2" class="f"/><rect x="16" y="23" width="18" height="3" rx="1.5"/>',
+    section: '<rect x="4" y="4" width="40" height="24" rx="3"/><rect x="10" y="10" width="20" height="4" rx="2" class="f"/><rect x="10" y="18" width="28" height="3" rx="1.5"/>',
+    box: '<rect x="8" y="5" width="32" height="22" rx="4" class="o"/><rect x="13" y="10" width="16" height="3" rx="1.5" class="f"/><rect x="13" y="17" width="22" height="3" rx="1.5"/>',
+    row: '<rect x="4" y="8" width="12" height="16" rx="3" class="o"/><rect x="18" y="8" width="12" height="16" rx="3" class="o"/><rect x="32" y="8" width="12" height="16" rx="3" class="o"/>',
+    cols2: '<rect x="6" y="6" width="17" height="20" rx="2"/><rect x="25" y="6" width="17" height="20" rx="2"/>',
+    cols3: '<rect x="4" y="6" width="12" height="20" rx="2"/><rect x="18" y="6" width="12" height="20" rx="2"/><rect x="32" y="6" width="12" height="20" rx="2"/>',
+    accordion: '<rect x="6" y="4" width="36" height="7" rx="2" class="o"/><rect x="6" y="13" width="36" height="7" rx="2" class="o"/><rect x="6" y="22" width="36" height="7" rx="2" class="o"/><path d="M36 7l2 2 2-2" class="s"/>',
+    accitem: '<rect x="6" y="6" width="36" height="20" rx="3" class="o"/><rect x="10" y="10" width="18" height="3" rx="1.5" class="f"/><rect x="10" y="17" width="26" height="3" rx="1.5"/>',
+    divider: '<rect x="6" y="15" width="36" height="2" rx="1" class="f"/>',
+    spacer: '<path d="M24 6v20M20 10l4-4 4 4M20 22l4 4 4-4" class="s"/>',
+    video: '<rect x="6" y="5" width="36" height="22" rx="4"/><path d="M21 11l9 5-9 5z" class="f"/>'
+  };
 
   function box(extra) {
     return '<div style="' + (extra || '') + 'padding:24px;border:1px solid #e5e7eb;border-radius:8px;background:#ffffff">\n' +
@@ -1162,93 +1624,92 @@
       'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>';
   }
 
-  /* Where a new block goes: after the selected element (or its block container). */
+  /* Where a new block goes without a drop position: after the selected element. */
   function insertPoint() {
-    var node = state.selected;
-    var body = state.doc.body;
-    if (node) {
-      while (node.parentElement && node.parentElement !== body &&
-             (/^(LI|TD|TH|TR|THEAD|TBODY|DT|DD|FIGCAPTION|SOURCE)$/.test(node.tagName) || isInline(node))) {
-        node = node.parentElement;
+    var s = twin(state.selected);
+    if (s) {
+      while (s.parentNode && s.parentNode !== state.src.body &&
+             (/^(LI|TD|TH|TR|THEAD|TBODY|DT|DD|FIGCAPTION|SOURCE|SUMMARY|SPAN|A|STRONG|EM|B|I|SMALL|IMG)$/.test(s.tagName))) {
+        s = s.parentNode;
       }
-      return { after: node };
+      return { parent: s.parentNode, before: s.nextSibling };
     }
-    var container = state.doc.querySelector('main') || body;
+    var container = state.src.querySelector('main') || state.src.body;
     var last = container.lastElementChild;
-    while (last && isPlaceholder(last)) last = last.previousElementSibling;
-    return last ? { after: last } : { inside: container };
+    while (last && last.tagName === 'SCRIPT') last = last.previousElementSibling;
+    return { parent: container, before: last ? last.nextSibling : null };
   }
 
-  function insertBlock(block, pos) {
+  function insertBlock(block, livePos) {
     if (!state.doc) return;
     var html = block.html ? block.html() : null;
     if (block.video) {
       html = youtubeEmbed(prompt(t('videoPrompt'), 'https://www.youtube.com/watch?v='));
       if (!html) return;
     }
-    var tpl = state.doc.createElement('template');
-    tpl.innerHTML = html;
-    var node = tpl.content.firstElementChild;
-    if (pos) {
-      pos.parent.insertBefore(node, pos.before);
+    var node = parseFragment(html).filter(function (n) { return n.nodeType === 1; })[0];
+    var at;
+    if (livePos) {
+      var parent = twin(livePos.parent);
+      if (!parent) return;
+      at = { parent: parent, before: srcBefore(livePos.before, parent) };
     } else {
-      var at = insertPoint();
-      if (at.after) at.after.after(node); else at.inside.appendChild(node);
+      at = insertPoint();
     }
-    // Keep the source readable: put the new block on its own line.
-    node.before(state.doc.createTextNode('\n'));
-    select(node);
-    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    commit();
-    if (block.image) changeImage();
+    srcInsert(at.parent, node, at.before);
+    changed(idOf(node), { check: true, then: block.image ? function () { changeImage(); } : null });
   }
 
   function buildBlocks() {
     var root = $('#blocks');
     BLOCKS.forEach(function (b) {
+      var svg = '<svg viewBox="0 0 48 32" class="thumb-svg">' + THUMBS[b.thumb] + '</svg>';
       root.appendChild(el('button', {
         'class': 'block',
+        title: t('addHint'),
         onclick: function () { if (!drag.justDropped) insertBlock(b); },
-        onmousedown: function (e) { if (e.button === 0) beginDrag(e, { block: b }, 'parent'); }
-      }, [
-        el('span', { 'class': 'block-icon', text: b.icon }), el('span', { text: t(b.key) })
-      ]));
+        onmousedown: function (e) { if (e.button === 0) beginDrag(e, { block: b }); }
+      }, [el('span', { 'class': 'block-thumb', html: svg }), el('span', { 'class': 'block-name', text: t(b.key) })]));
     });
   }
 
-  // ------------------------------------------------------------ drag and drop
+  // ------------------------------------------------------------ drag and drop on the page
 
   /*
    * Elements (and new blocks from the left panel) can be dragged to another
    * place on the page. While dragging, a transparent cover lies over the
-   * page so all mouse moves arrive in one place; the element under the
-   * pointer is found with elementFromPoint and a blue line shows where the
-   * dragged element will land.
+   * page; the element under the pointer is found with elementFromPoint and
+   * a line shows where the dragged element will land. Only elements that
+   * exist in the source (not ones made by the site's scripts) are targets.
    */
   var CONTAINERS = /^(DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|NAV|FIGURE|FORM|BLOCKQUOTE|TD|TH|LI|BODY|UL|OL|DETAILS)$/;
   var drag = { pending: null, active: false, pos: null, justDropped: false };
 
-  function beginDrag(e, what, origin) {
-    drag.pending = { what: what, x: e.screenX, y: e.screenY, origin: origin };
+  function beginDrag(e, what) {
+    drag.pending = { what: what, x: e.screenX, y: e.screenY };
     drag.justDropped = false;
   }
 
   function onDragMove(e) {
-    if (!drag.pending) return;
+    if (!drag.pending || !state.doc) return;
     if (!drag.active) {
       if (Math.abs(e.screenX - drag.pending.x) + Math.abs(e.screenY - drag.pending.y) < 6) return;
       drag.active = true;
       $('#drag-cover').hidden = false;
       document.body.classList.add('dragging');
-      if (drag.pending.what.node) state.hovered = null;
+      state.hovered = null;
     }
     e.preventDefault();
     var wrap = $('#frame-wrap').getBoundingClientRect();
     var x, y;
     if (e.view === window) { x = e.clientX - wrap.left; y = e.clientY - wrap.top; }
     else { x = e.clientX; y = e.clientY; } // event from inside the page
-    autoScroll(y, wrap.height);
-    drag.pos = dropPosition(x, y);
+    if (x < 0 || y < 0 || x > wrap.width || y > wrap.height) {
+      drag.pos = null; // outside the page: dropping cancels
+    } else {
+      autoScroll(y, wrap.height);
+      drag.pos = dropPosition(x, y);
+    }
     showDropLine(drag.pos);
     // Outline the box the element will land in.
     state.hovered = drag.pos && drag.pos.parent !== state.doc.body ? drag.pos.parent : null;
@@ -1264,24 +1725,37 @@
     $('#drag-cover').hidden = true;
     $('#drop-line').hidden = true;
     document.body.classList.remove('dragging');
+    state.hovered = null;
     var pos = drag.pos;
     drag.pos = null;
     if (!pos) return;
     if (pending.what.block) return insertBlock(pending.what.block, pos);
-    var node = pending.what.node;
-    if (pos.before === node) return;
-    var oldParent = node.parentNode, oldNext = node.nextSibling;
+    moveTo(pending.what.node, pos);
+  }
+
+  /* Move a live element to a drop position (in the source copy, then show it). */
+  function moveTo(node, pos) {
+    var s = twin(node);
+    if (!s) return;
     if (pos.split !== undefined) {
+      // Between two words: do it in the live view, then copy that paragraph back.
+      var parent = twin(pos.parent);
+      if (!parent || s.contains(parent)) return;
+      var pool = poolOf(parent);
+      [s].concat($$('[' + ID + ']', s)).forEach(function (n) { pool.ids[n.getAttribute(ID)] = n; });
       pos.parent.insertBefore(node, pos.before.splitText(pos.split));
-      pos.parent.normalize(); // no empty text pieces left behind
-      select(node);
-      commit();
+      srcRemove(s);
+      syncChildren(pos.parent, parent, pool, function () { return false; });
+      changed(idOf(s), { check: true });
       return;
     }
-    pos.parent.insertBefore(node, pos.before);
-    if (node.parentNode === oldParent && node.nextSibling === oldNext) return;
-    select(node);
-    commit();
+    var srcParent = twin(pos.parent);
+    if (!srcParent || s === srcParent || s.contains(srcParent)) return;
+    var before = srcBefore(pos.before, srcParent);
+    if (before === s) return;
+    srcRemove(s);
+    srcInsert(srcParent, s, before);
+    changed(idOf(s), { check: true });
   }
 
   function autoScroll(y, height) {
@@ -1296,10 +1770,19 @@
     return (/flex/.test(cs.display) && !/column/.test(cs.flexDirection)) || /grid/.test(cs.display);
   }
 
+  function known(node) {
+    return node === state.doc.body || node.hasAttribute(ID);
+  }
+
+  function shown(node) {
+    if (!node.getClientRects().length) return false;
+    var cs = state.win.getComputedStyle(node);
+    return cs.visibility !== 'hidden' && +cs.opacity > 0;
+  }
+
   function children(container, except) {
     return Array.prototype.filter.call(container.children, function (c) {
-      return c !== except && !isPlaceholder(c) && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName) &&
-        state.win.getComputedStyle(c).display !== 'none';
+      return c !== except && c.hasAttribute(ID) && shown(c);
     });
   }
 
@@ -1326,8 +1809,8 @@
     if (!range || range.startContainer.nodeType !== 3) return null;
     var text = range.startContainer;
     var parent = text.parentNode;
-    if (!parent || moving.contains(parent) || !TEXT_BLOCKS.test(parent.tagName)) return null;
-    if (!text.nodeValue.trim()) return null;
+    if (!parent || moving.contains(parent) || !TEXT_BLOCKS.test(parent.tagName) || !known(parent)) return null;
+    if (!text.nodeValue.trim() || !shown(parent)) return null;
     var rect = range.getBoundingClientRect();
     return { parent: parent, before: text, split: range.startOffset, caret: rect };
   }
@@ -1343,27 +1826,26 @@
     // Never drop an element into itself.
     if (moving && moving.contains(target)) target = moving;
     var node = target;
-    while (node !== doc.body) {
-      if (node !== moving && CONTAINERS.test(node.tagName) && allowedParent(node, moving)) {
-        var r = node.getBoundingClientRect();
-        var inner = Math.min(16, r.width / 4, r.height / 4);
-        var inside = x > r.left + inner && x < r.right - inner && y > r.top + inner && y < r.bottom - inner;
-        if (inside && !(moving && node.contains(moving) && children(node, moving).length === 0)) {
-          return positionAmong(node, x, y, moving);
+    while (node && node !== doc.body) {
+      if (known(node) && shown(node) && node !== moving) {
+        if (CONTAINERS.test(node.tagName) && allowedParent(node, moving)) {
+          var r = node.getBoundingClientRect();
+          var inner = Math.min(16, r.width / 4, r.height / 4);
+          var inside = x > r.left + inner && x < r.right - inner && y > r.top + inner && y < r.bottom - inner;
+          if (inside) return positionAmong(node, x, y, moving);
         }
-      }
-      if (node.parentElement && allowedParent(node.parentElement, moving) && node.parentElement !== moving) {
-        // Near the edge of a non-container (or of a container): before or after it.
-        var pr = node.getBoundingClientRect();
-        var row = isRow(node.parentElement);
-        var after = row ? x > pr.left + pr.width / 2 : y > pr.top + pr.height / 2;
-        if (!CONTAINERS.test(node.tagName) || !node.contains(moving)) {
-          return { parent: node.parentElement, before: after ? node.nextSibling : node, ref: node, after: after, row: row };
+        var parent = node.parentElement;
+        if (parent && known(parent) && parent !== moving && allowedParent(parent, moving)) {
+          // Near the edge of an element: before or after it.
+          var pr = node.getBoundingClientRect();
+          var row = isRow(parent);
+          var after = row ? x > pr.left + pr.width / 2 : y > pr.top + pr.height / 2;
+          return { parent: parent, before: after ? node.nextSibling : node, ref: node, after: after, row: row };
         }
       }
       node = node.parentElement;
     }
-    return positionAmong(doc.body, x, y, moving);
+    return allowedParent(doc.body, moving) ? positionAmong(doc.body, x, y, moving) : null;
   }
 
   function positionAmong(container, x, y, moving) {
@@ -1405,48 +1887,149 @@
 
   document.addEventListener('mousemove', onDragMove);
   document.addEventListener('mouseup', onDragEnd);
-  frame.addEventListener('load', function () {
-    frame.contentDocument.addEventListener('mousemove', onDragMove, true);
-    frame.contentDocument.addEventListener('mouseup', onDragEnd, true);
-  });
 
   $('#el-toolbar [data-act="drag"]').addEventListener('mousedown', function (e) {
     e.preventDefault();
-    if (e.button === 0 && state.selected) beginDrag(e, { node: state.selected }, 'parent');
+    if (e.button === 0 && state.selected) beginDrag(e, { node: state.selected });
   });
+
+  // ------------------------------------------------------------ structure panel (layers)
+
+  var expanded = {};
+  var layersQueued = false;
+
+  function layerChildren(s) {
+    return Array.prototype.filter.call(s.children, function (c) {
+      return c.hasAttribute(ID) && !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|BR|LINK|META)$/.test(c.tagName);
+    });
+  }
+
+  function layerText(s) {
+    var text = '';
+    Array.prototype.some.call(s.childNodes, function (c) {
+      if (c.nodeType === 3 && c.nodeValue.trim()) { text = c.nodeValue.trim(); return true; }
+      return false;
+    });
+    if (!text && s.tagName === 'IMG') text = s.getAttribute('alt') || s.getAttribute('src') || '';
+    return text.length > 28 ? text.slice(0, 27) + '…' : text;
+  }
+
+  function renderLayers() {
+    if (layersQueued) return;
+    layersQueued = true;
+    requestAnimationFrame(function () {
+      layersQueued = false;
+      if ($('#ltab-layers').hidden || !state.src) return;
+      var selected = srcById(state.selectedId);
+      for (var p = selected && selected.parentNode; p && p !== state.src.body; p = p.parentNode) {
+        if (p.nodeType === 1) expanded[p.getAttribute(ID)] = true;
+      }
+      var root = $('#layers');
+      var scroll = root.scrollTop;
+      root.innerHTML = '';
+      layerChildren(state.src.body).forEach(function (c) { addLayer(root, c, 0); });
+      root.scrollTop = scroll;
+      var cur = $('.layer.current', root);
+      if (cur && cur.scrollIntoViewIfNeeded) cur.scrollIntoViewIfNeeded(false);
+    });
+  }
+
+  function addLayer(root, s, depth) {
+    var id = s.getAttribute(ID);
+    var kids = layerChildren(s);
+    var open = !!expanded[id];
+    var tag = s.tagName.toLowerCase();
+    var name = t('tag_' + tag);
+    if (name === 'tag_' + tag) name = tag;
+    var cls = Array.prototype.filter.call(s.classList, function (c) { return !/^wse-/.test(c); })[0];
+    var row = el('div', {
+      'class': 'layer' + (id === state.selectedId ? ' current' : ''),
+      draggable: 'true', role: 'treeitem', 'data-id': id,
+      style: 'padding-left:' + (6 + depth * 14) + 'px'
+    }, [
+      el('button', { 'class': 'layer-caret' + (open ? ' open' : '') + (kids.length ? '' : ' none'), tabindex: '-1',
+        onclick: function (e) { e.stopPropagation(); expanded[id] = !open; renderLayers(); } }, [icon('chevron')]),
+      el('span', { 'class': 'layer-name', text: name }),
+      cls || s.id ? el('span', { 'class': 'layer-cls', text: s.id ? '#' + s.id : '.' + cls }) : null,
+      el('span', { 'class': 'layer-text', text: layerText(s) })
+    ]);
+    row.addEventListener('click', function () {
+      var live = liveById(id);
+      if (!live) return;
+      select(live);
+      revealNode(live, false);
+    });
+    row.addEventListener('mouseenter', function () { state.hovered = liveById(id); });
+    row.addEventListener('mouseleave', function () { state.hovered = null; });
+    row.addEventListener('dragstart', function (e) {
+      e.dataTransfer.setData('text/plain', id);
+      e.dataTransfer.effectAllowed = 'move';
+      layerDrag = id;
+    });
+    row.addEventListener('dragend', function () { layerDrag = null; clearLayerMarks(); });
+    row.addEventListener('dragover', function (e) {
+      var zone = layerZone(e, row, s);
+      clearLayerMarks();
+      if (!zone) return;
+      e.preventDefault();
+      row.classList.add('drop-' + zone);
+    });
+    row.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var zone = layerZone(e, row, s);
+      clearLayerMarks();
+      var moving = srcById(layerDrag);
+      layerDrag = null;
+      if (!zone || !moving) return;
+      if (zone === 'inside') {
+        expanded[id] = true;
+        var first = layerChildren(s)[0];
+        srcRemove(moving);
+        srcInsert(s, moving, first || null);
+      } else {
+        var next = zone === 'after' ? s.nextSibling : s;
+        srcRemove(moving);
+        srcInsert(s.parentNode, moving, next);
+      }
+      changed(idOf(moving), { check: true });
+    });
+    root.appendChild(row);
+    if (open) kids.forEach(function (c) { addLayer(root, c, depth + 1); });
+  }
+
+  var layerDrag = null;
+
+  function clearLayerMarks() {
+    $$('.layer.drop-before, .layer.drop-after, .layer.drop-inside').forEach(function (r) {
+      r.classList.remove('drop-before', 'drop-after', 'drop-inside');
+    });
+  }
+
+  function layerZone(e, row, s) {
+    var moving = srcById(layerDrag);
+    if (!moving || moving === s || moving.contains(s)) return null;
+    var r = row.getBoundingClientRect();
+    var f = (e.clientY - r.top) / r.height;
+    var canInside = CONTAINERS.test(s.tagName) && allowedParent(s, moving);
+    var canSibling = s.parentNode && allowedParent(s.parentNode, moving);
+    if (canInside && (f > 0.3 && f < 0.7 || !canSibling)) return 'inside';
+    if (!canSibling) return null;
+    return f < 0.5 ? 'before' : 'after';
+  }
 
   // ------------------------------------------------------------ history
 
-  function nodePath(node) {
-    var path = [];
-    while (node && node.parentElement && node !== state.doc.body) {
-      path.unshift(Array.prototype.indexOf.call(node.parentElement.children, node));
-      node = node.parentElement;
-    }
-    return path;
-  }
-
-  function nodeAt(path) {
-    var node = state.doc.body;
-    for (var i = 0; i < path.length && node; i++) node = node.children[path[i]];
-    return node && node !== state.doc.body ? node : null;
-  }
-
   function snapshot() {
-    return { html: state.doc.body.innerHTML, css: S.serialize(state.model), model: S.clone(state.model) };
+    return { html: state.src.body.innerHTML, css: S.serialize(state.model), model: S.clone(state.model) };
   }
 
   function currentKey() {
-    if (!state.doc) return '';
-    var editing = state.editing;
-    if (editing) editing.removeAttribute('contenteditable');
-    var key = state.doc.body.innerHTML + '\u0000' + S.serialize(state.model);
-    if (editing) editing.setAttribute('contenteditable', 'true');
-    return key;
+    if (!state.src) return '';
+    return state.src.body.innerHTML + '\u0000' + S.serialize(state.model);
   }
 
   function commit() {
-    if (!state.doc) return;
+    if (!state.src) return;
     var snap = snapshot();
     var cur = state.history[state.hIndex];
     if (cur && cur.html === snap.html && cur.css === snap.css) return;
@@ -1460,16 +2043,14 @@
   function restore(index) {
     if (state.editing) finishEditing();
     if (index < 0 || index >= state.history.length) return;
-    var path = state.selected ? nodePath(state.selected) : null;
     state.hIndex = index;
     var snap = state.history[index];
-    state.doc.body.innerHTML = snap.html;
+    state.src.body.innerHTML = snap.html;
     state.model = S.clone(snap.model);
     writeStyles();
-    state.selected = path ? nodeAt(path) : null;
-    state.hovered = null;
-    renderPanels();
     updateDirty();
+    renderLayers();
+    render();
   }
 
   function undo() { restore(state.hIndex - 1); }
@@ -1479,7 +2060,7 @@
   $('#btn-redo').addEventListener('click', redo);
 
   function isDirty() {
-    return !!state.doc && currentKey() !== state.savedKey;
+    return !!state.src && currentKey() !== state.savedKey;
   }
 
   function updateDirty() {
@@ -1498,14 +2079,28 @@
 
   var PLACEHOLDER_RE = /<script type="text\/x-wse-off" data-wse-idx="(\d+)"><\/script>/g;
 
-  function restoreScripts(html) {
+  /* Put the original scripts back. mark: tag them so the live view can map them. */
+  function restoreScripts(html, mark) {
     return html.replace(PLACEHOLDER_RE, function (_, i) {
-      return state.dropScripts[i] ? '' : (state.scripts[+i] || '');
+      if (state.dropScripts[i]) return '';
+      var text = state.scripts[+i] || '';
+      return mark ? text.replace(/^<script/i, '<script data-wse-sidx="' + i + '"') : text;
     });
   }
 
   function styleBlock(css) {
     return '<style id="' + S.STYLE_ID + '">\n/* Styles changed with WYSIWYG Edit */\n' + css + '</style>';
+  }
+
+  function syncWholeDocStyle(css) {
+    var styleEl = state.src.getElementById(S.STYLE_ID);
+    if (!css) { if (styleEl) styleEl.remove(); return; }
+    if (!styleEl) {
+      styleEl = state.src.createElement('style');
+      styleEl.id = S.STYLE_ID;
+      state.src.head.appendChild(styleEl);
+    }
+    styleEl.textContent = '\n/* Styles changed with WYSIWYG Edit */\n' + css;
   }
 
   /* Put the editor's <style> block into the page's <head> source. */
@@ -1533,34 +2128,29 @@
 
   function buildOutput() {
     if (state.editing) finishEditing();
-    var doc = state.doc;
     var css = S.serialize(state.model);
     if (state.wholeDoc) {
-      var helper = doc.getElementById('wse-helper');
-      if (helper) helper.remove();
-      if (!css) state.styleEl.remove();
-      var html = '<!DOCTYPE html>\n' + restoreScripts(doc.documentElement.outerHTML);
-      if (!css) doc.head.appendChild(state.styleEl);
-      if (helper) doc.head.appendChild(helper);
-      return html;
+      syncWholeDocStyle(css);
+      return '<!DOCTYPE html>\n' + restoreScripts(stripIds(state.src.documentElement.outerHTML));
     }
-    var body = doc.body.innerHTML.replace(PLACEHOLDER_RE, function (m, i) { return state.dropScripts[i] ? '' : m; });
+    var body = state.src.body.innerHTML.replace(PLACEHOLDER_RE, function (m, i) { return state.dropScripts[i] ? '' : m; });
+    body = stripIds(body);
     // Whitespace after </body> ends up inside <body> when the browser reads it; put it back.
     body = body.replace(/\s+$/, '') + state.bodyTrail;
-    return headWithStyles(state.prefix, css) + restoreScripts(keepEntities(body)) + state.suffix;
+    return headWithStyles(state.prefix, css) + restoreScripts(bareAttributes(keepEntities(body))) + state.suffix;
   }
 
   function save() {
-    if (!state.doc) return Promise.resolve();
-    var btn = $('#btn-save');
-    btn.textContent = t('saving');
+    if (!state.src) return Promise.resolve();
+    var label = $('#save-label');
+    label.textContent = t('saving');
     var content = buildOutput();
     var key = currentKey();
     return api('/api/save', { path: state.page, content: content }).then(function (res) {
       state.savedKey = key;
       updateDirty();
       toast(res.backup ? t('savedTo', { path: res.backup }) : t('saved') + ' ✓');
-    }).catch(fail).then(function () { btn.textContent = t('save'); });
+    }).catch(fail).then(function () { label.textContent = t('save'); });
   }
 
   $('#btn-save').addEventListener('click', save);
@@ -1595,7 +2185,7 @@
       var wrap = $('#frame-wrap');
       wrap.style.width = width ? width + 'px' : '';
       wrap.classList.toggle('framed', !!width);
-      setTimeout(refreshStylePanel, 50);
+      setTimeout(refreshStylePanel, 250);
     });
   });
 
@@ -1630,6 +2220,7 @@
       return;
     }
     if (typingInPanel(e)) return;
+    if (e.key === 'Escape' && state.interact) { setInteract(false); return; }
     if (mod && key === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
     if (mod && key === 'y') { e.preventDefault(); redo(); return; }
     if (!state.selected) return;
@@ -1650,12 +2241,15 @@
   document.documentElement.lang = window.WSE_LANG;
   buildBlocks();
   buildStylePanel();
+  updateStatus();
   api('/api/state').then(function (data) {
     if (data.root) openSite(data); else showStart();
   }).catch(fail);
 
   // For automated tests.
-  window.WSE = { state: state, buildOutput: buildOutput, save: save, select: select, act: act, setStyle: setStyle,
-    insertBlock: function (key) { insertBlock(BLOCKS.filter(function (b) { return b.key === key; })[0]); },
-    startEditing: startEditing, finishEditing: finishEditing, undo: undo, redo: redo };
+  window.WSE = {
+    state: state, buildOutput: buildOutput, save: save, select: select, act: act, setStyle: setStyle,
+    liveById: liveById, undo: undo, redo: redo, setInteract: setInteract,
+    ready: function () { return !!state.doc && state.shownSeq === renderSeq; }
+  };
 })();

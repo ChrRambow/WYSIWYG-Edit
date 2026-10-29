@@ -18,6 +18,17 @@ img { max-width: 100%; height: auto; }
 .card { background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.05); }
 .card h2 { margin-top: 0; color: #b45309; }
 
+/* Revealed by js/main.js when scrolled into view. */
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s, transform .6s; }
+.reveal.visible { opacity: 1; transform: none; }
+
+.hours { max-width: 760px; margin: 0 auto; padding: 32px; text-align: center; }
+.tab-buttons { display: flex; justify-content: center; gap: 8px; margin-bottom: 16px; }
+.tab-buttons button { padding: 8px 16px; border: 1px solid #d97706; background: #fff; color: #d97706; border-radius: 999px; cursor: pointer; font: inherit; }
+.tab-buttons button.active { background: #d97706; color: #fff; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
 .contact { text-align: center; padding: 48px 32px; }
 .page { max-width: 760px; margin: 0 auto; padding: 48px 32px; }
 .site-footer { text-align: center; padding: 24px; background: #3b2f2f; color: #f5e9da; }

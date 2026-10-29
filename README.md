@@ -39,7 +39,9 @@ To try it out, open the included `example-site` folder.
 | **Accordions** | Built from the standard HTML `<details>` element, so they open and close on the website without any JavaScript. In the editor, the ▾ button (or **Settings** → "Open when the page loads") opens and closes an item; it is saved the way you leave it. Add more items with the "Accordion item" block or by duplicating one. |
 | **Links** | Select a link, then **Settings** → link address and "open in new tab". |
 | **Add blocks** | Headings, paragraphs, images, buttons, lists, sections, 2 or 3 columns, boxes, a row of boxes, accordions, dividers, spacers and YouTube videos from the left panel. Click to insert below the selected element, or drag them onto the page. |
-| **Move anything** | Every element can be dragged with the mouse: boxes, sections, images, links, headings, list items. Press and drag; a blue line shows where it lands and a dashed outline the box it goes into. Links, images and other inline elements can also be dropped between two words of a text. To move a whole box rather than something inside it, select the box first (or pick it in the bar under the page) and drag it. Blocks from the left panel can be dragged onto the page too. |
+| **Move anything** | Every element can be dragged with the mouse: press on it and drag. A line shows where it lands and an outline shows the box it goes into. Links, images and other inline elements can also be dropped between two words. To move a whole box rather than something inside it, select the box and drag it by the ✥ handle on its toolbar. If something lands in a place that is not visible (for example a hidden menu), the editor says so and offers to undo. |
+| **Structure** | The **Structure** tab on the left lists every element of the page as a tree. Click to select, drag to move; dropping onto the middle of a box puts the element inside it. Handy for nested or hidden elements. |
+| **Use page** | **Use page** lets you click the page like a visitor (open the mobile menu, switch tabs, move a slider) to reach content you want to edit. `Esc` goes back to editing. |
 | **Duplicate, delete** | With the buttons above the selected element (↑ ↓ also move it one step), or `Delete` on the keyboard. |
 | **Styles** | The **Style** panel changes font, size, color, alignment, background, spacing, size, layout, borders and shadows. |
 | **Responsive** | Switch between **Desktop**, **Tablet** and **Mobile** at the top. Style changes made in Tablet or Mobile only apply to those screen sizes, and you can hide elements on one size only. |
@@ -54,10 +56,13 @@ The editor speaks German or English, following the browser's language
 
 ## How it keeps your website intact
 
-- **JavaScript keeps working.** While you edit, the page's scripts are paused
-  so they cannot change the page under your hands (for example a slider
-  rewriting its content). When you save, every `<script>` is written back
-  exactly as it was. Use **Preview** to see the page with scripts running.
+- **JavaScript runs in the editor.** The page is shown with all its scripts
+  running, so animations, sliders, tabs and menus look and work like on the
+  real site. The editor keeps a separate, script-free copy of the page and
+  saves only that copy plus your own changes: whatever the scripts add or
+  change on the screen (built buttons, classes like `visible`, the current
+  year...) is never written into your files, and every `<script>` is written
+  back exactly as it was.
 - **Only what you change changes.** Everything outside `<body>` (doctype,
   `<head>`, comments) is kept character for character. Saving a page without
   changes writes the identical file. Entities such as `&copy;` stay as they
@@ -71,10 +76,11 @@ The editor speaks German or English, following the browser's language
 
 ## Limits
 
-- Content that only appears through JavaScript (for example a menu that a
-  script builds) cannot be edited visually, because scripts are paused.
-  Content that is only hidden until a script shows it can be reached with the
-  breadcrumb bar under the page or the **HTML** tab.
+- Content that a script creates from scratch (for example tab buttons built
+  from data) is not in the HTML file, so it cannot be edited; clicking it
+  selects the nearest element that is in the file. Content that a script
+  only hides or shows can be reached with **Use page**, the **Structure** tab
+  or the **HTML** tab.
 - Style changes apply to one element or to all elements with one of its
   classes. Editing the site's own `.css` files is not part of the editor yet.
 - There is no "new page" command yet: copy an existing `.html` file in the
@@ -89,6 +95,7 @@ JavaScript.
 ```
 server.py          local server: serves the editor and the site, saves, uploads, backups
 editor/            the editor (index.html, editor.js, styles.js, i18n.js, editor.css)
+                   editor.js has an overview of how the live view and the saved copy work together
 example-site/      a small responsive sample website
 tests/             unit tests (Python) and an end-to-end test (Playwright)
 ```

@@ -10,16 +10,13 @@ import server  # noqa: E402
 
 
 class ScriptTests(unittest.TestCase):
-    def test_split_and_find_agree(self):
+    def test_find_scripts(self):
         src = '<head><script>var a = "<body>";</script></head><body><p>x</p><SCRIPT src="a.js"></SCRIPT ></body>'
-        html, scripts = server.split_scripts(src)
         found = server.find_scripts(src)
-        self.assertEqual(scripts, [s["text"] for s in found])
-        self.assertEqual(len(scripts), 2)
-        self.assertIn('<script type="text/x-wse-off" data-wse-idx="1"></script>', html)
-        self.assertNotIn("a.js", html)
+        self.assertEqual(len(found), 2)
         for s in found:
             self.assertEqual(src[s["start"]:s["end"]], s["text"])
+        self.assertIn("a.js", found[1]["text"])
 
 
 class PathTests(unittest.TestCase):

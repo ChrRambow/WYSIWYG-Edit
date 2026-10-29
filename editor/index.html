@@ -10,13 +10,48 @@
 </head>
 <body>
 
+  <!-- Icons (stroke icons, 24x24 grid) -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <defs>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="i-desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+      <symbol id="i-tablet" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M11 18h2"/></symbol>
+      <symbol id="i-mobile" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/><path d="M20 7a5 5 0 0 1 0 6M22.5 5a8.5 8.5 0 0 1 0 10" /></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3M7 21v-7h10v7"/></symbol>
+      <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 10V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M14 10.5V6a1.5 1.5 0 0 1 3 0v6"/><path d="M17 9.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1a7 7 0 0 1-5.6-2.8L3.6 15a1.5 1.5 0 0 1 2.3-1.9L8 15"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+      <symbol id="i-grip" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+      <symbol id="i-parent" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h9a7 7 0 0 1 7 7v4"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15"/></symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+      <symbol id="i-toggle" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+      <symbol id="i-unlink" viewBox="0 0 24 24"><path d="M10 7l1-1a4 4 0 0 1 5.7 5.7l-1 1M14 17l-1 1a4 4 0 0 1-5.7-5.7l1-1"/><path d="M4 4l16 16"/></symbol>
+      <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M16 3l5 5-11 11H5l-3-3z"/><path d="M9 20h12"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+    </defs>
+  </svg>
+
   <!-- Start screen: choose the website folder -->
   <div id="start" class="start" hidden>
     <div class="start-card">
-      <img src="/app/icon.svg" alt="" width="56" height="56">
+      <div class="start-logo"><img src="/app/icon.svg" alt="" width="48" height="48"></div>
       <h1 data-i18n="openTitle"></h1>
-      <p data-i18n="openIntro"></p>
-      <button id="choose-folder" class="btn primary big" data-i18n="chooseFolder"></button>
+      <p class="lead" data-i18n="openIntro"></p>
+      <button id="choose-folder" class="btn primary big"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="chooseFolder"></span></button>
       <form id="path-form" class="path-form">
         <label for="path-input" data-i18n="orTypePath"></label>
         <div class="row">
@@ -35,73 +70,96 @@
   <!-- Editor -->
   <div id="app" class="app" hidden>
     <header class="topbar">
-      <button id="btn-folder" class="btn ghost folder-btn" data-i18n-title="folder">
-        <span class="i">📁</span> <span id="site-name"></span>
+      <button id="btn-folder" class="site-btn" data-i18n-title="folder">
+        <img src="/app/icon.svg" alt="" width="24" height="24">
+        <span id="site-name"></span>
       </button>
-      <select id="page-select" class="page-select" data-i18n-title="page"></select>
-      <div class="sep"></div>
-      <div class="devices" role="group">
-        <button class="btn ghost device active" data-device="desktop" data-i18n-title="desktop">🖥 <span data-i18n="desktop"></span></button>
-        <button class="btn ghost device" data-device="tablet" data-i18n-title="tablet">▭ <span data-i18n="tablet"></span></button>
-        <button class="btn ghost device" data-device="mobile" data-i18n-title="mobile">▯ <span data-i18n="mobile"></span></button>
+      <div class="select-wrap">
+        <select id="page-select" class="page-select" data-i18n-title="page"></select>
       </div>
-      <div class="sep"></div>
-      <button id="btn-undo" class="btn ghost" data-i18n-title="undo" disabled>↶</button>
-      <button id="btn-redo" class="btn ghost" data-i18n-title="redo" disabled>↷</button>
+      <div class="seg-group devices" role="group">
+        <button class="seg-btn device active" data-device="desktop" data-i18n-title="desktop"><svg class="ic"><use href="#i-desktop"/></svg><span data-i18n="desktop"></span></button>
+        <button class="seg-btn device" data-device="tablet" data-i18n-title="tablet"><svg class="ic"><use href="#i-tablet"/></svg><span data-i18n="tablet"></span></button>
+        <button class="seg-btn device" data-device="mobile" data-i18n-title="mobile"><svg class="ic"><use href="#i-mobile"/></svg><span data-i18n="mobile"></span></button>
+      </div>
+      <div class="icon-group">
+        <button id="btn-undo" class="icon-btn" data-i18n-title="undo" disabled><svg class="ic"><use href="#i-undo"/></svg></button>
+        <button id="btn-redo" class="icon-btn" data-i18n-title="redo" disabled><svg class="ic"><use href="#i-redo"/></svg></button>
+      </div>
       <div class="spacer"></div>
-      <button id="btn-phone" class="btn ghost" data-i18n="phone"></button>
-      <button id="btn-preview" class="btn" data-i18n="preview"></button>
-      <button id="btn-save" class="btn primary" data-i18n="save"></button>
+      <button id="btn-interact" class="btn ghost toggle" data-i18n-title="interactHint"><svg class="ic"><use href="#i-hand"/></svg><span data-i18n="interact"></span></button>
+      <button id="btn-phone" class="btn ghost" data-i18n-title="phone"><svg class="ic"><use href="#i-phone"/></svg><span class="hide-sm" data-i18n="phone"></span></button>
+      <button id="btn-preview" class="btn ghost"><svg class="ic"><use href="#i-eye"/></svg><span data-i18n="preview"></span></button>
+      <button id="btn-save" class="btn primary"><svg class="ic"><use href="#i-save"/></svg><span id="save-label" data-i18n="save"></span></button>
     </header>
 
     <div class="main">
       <aside class="left panel">
-        <h3 data-i18n="add"></h3>
-        <p class="hint" data-i18n="addHint"></p>
-        <div id="blocks" class="blocks"></div>
+        <div class="tabs" role="tablist">
+          <button class="ltab tab active" data-ltab="add"><svg class="ic"><use href="#i-plus"/></svg><span data-i18n="add"></span></button>
+          <button class="ltab tab" data-ltab="layers"><svg class="ic"><use href="#i-layers"/></svg><span data-i18n="layers"></span></button>
+        </div>
+        <div id="ltab-add" class="ltab-body">
+          <p class="hint" data-i18n="addHint"></p>
+          <div id="blocks" class="blocks"></div>
+        </div>
+        <div id="ltab-layers" class="ltab-body" hidden>
+          <p class="hint" data-i18n="layersHint"></p>
+          <div id="layers" class="layers" role="tree"></div>
+        </div>
       </aside>
 
       <section class="canvas" id="canvas">
         <div class="frame-wrap" id="frame-wrap">
-          <iframe id="frame" title="Page"></iframe>
+          <iframe class="frame active" id="frame-a" title="Page" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>
+          <iframe class="frame" id="frame-b" title="Page" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>
+          <div class="loading" id="loading" hidden><span class="spinner"></span></div>
           <div class="drag-cover" id="drag-cover" hidden></div>
           <div class="overlay" id="overlay">
-            <div class="box hover-box" id="hover-box" hidden></div>
+            <div class="box hover-box" id="hover-box" hidden><span class="box-tag" id="hover-tag"></span></div>
             <div class="box select-box" id="select-box" hidden></div>
             <div class="drop-line" id="drop-line" hidden></div>
             <div class="toolbar" id="el-toolbar" hidden>
-              <button data-act="drag" class="grip" data-i18n-title="dragMove">✥</button>
+              <button data-act="drag" class="grip" data-i18n-title="dragMove"><svg class="ic"><use href="#i-grip"/></svg></button>
               <span class="tb-label" id="tb-label"></span>
-              <button data-act="parent" data-i18n-title="selectParent">⤒</button>
-              <button data-act="up" data-i18n-title="moveUp">↑</button>
-              <button data-act="down" data-i18n-title="moveDown">↓</button>
-              <button data-act="edit" data-i18n-title="editText">✎</button>
-              <button data-act="image" data-i18n-title="changeImage">🖼</button>
-              <button data-act="toggle" data-i18n-title="toggleOpen">▾</button>
-              <button data-act="duplicate" data-i18n-title="duplicate">⧉</button>
-              <button data-act="delete" data-i18n-title="remove">🗑</button>
+              <span class="tb-sep"></span>
+              <button data-act="parent" data-i18n-title="selectParent"><svg class="ic"><use href="#i-parent"/></svg></button>
+              <button data-act="up" data-i18n-title="moveUp"><svg class="ic"><use href="#i-up"/></svg></button>
+              <button data-act="down" data-i18n-title="moveDown"><svg class="ic"><use href="#i-down"/></svg></button>
+              <button data-act="edit" data-i18n-title="editText"><svg class="ic"><use href="#i-pencil"/></svg></button>
+              <button data-act="image" data-i18n-title="changeImage"><svg class="ic"><use href="#i-image"/></svg></button>
+              <button data-act="toggle" data-i18n-title="toggleOpen"><svg class="ic"><use href="#i-toggle"/></svg></button>
+              <button data-act="duplicate" data-i18n-title="duplicate"><svg class="ic"><use href="#i-copy"/></svg></button>
+              <button data-act="delete" class="danger" data-i18n-title="remove"><svg class="ic"><use href="#i-trash"/></svg></button>
             </div>
             <div class="toolbar rte" id="rte-toolbar" hidden>
               <button data-cmd="bold" data-i18n-title="bold"><b>B</b></button>
               <button data-cmd="italic" data-i18n-title="italic"><i>I</i></button>
               <button data-cmd="underline" data-i18n-title="underline"><u>U</u></button>
-              <button data-cmd="createLink" data-i18n-title="makeLink">🔗</button>
-              <button data-cmd="unlink" data-i18n-title="unlink">⛓</button>
-              <button data-cmd="removeFormat" data-i18n-title="clearFormat">⌫</button>
-              <button data-cmd="done" class="done" data-i18n="done"></button>
+              <span class="tb-sep"></span>
+              <button data-cmd="createLink" data-i18n-title="makeLink"><svg class="ic"><use href="#i-link"/></svg></button>
+              <button data-cmd="unlink" data-i18n-title="unlink"><svg class="ic"><use href="#i-unlink"/></svg></button>
+              <button data-cmd="removeFormat" data-i18n-title="clearFormat"><svg class="ic"><use href="#i-eraser"/></svg></button>
+              <button data-cmd="done" class="done"><svg class="ic"><use href="#i-check"/></svg><span data-i18n="done"></span></button>
             </div>
           </div>
         </div>
-        <nav class="crumbs" id="crumbs"></nav>
+        <div class="statusbar">
+          <nav class="crumbs" id="crumbs"></nav>
+          <span class="status-chip" id="status-chip"></span>
+        </div>
       </section>
 
       <aside class="right panel">
         <div class="tabs" role="tablist">
-          <button class="tab active" data-tab="style" data-i18n="style"></button>
-          <button class="tab" data-tab="settings" data-i18n="settings"></button>
-          <button class="tab" data-tab="html" data-i18n="html"></button>
+          <button class="tab rtab active" data-tab="style" data-i18n="style"></button>
+          <button class="tab rtab" data-tab="settings" data-i18n="settings"></button>
+          <button class="tab rtab" data-tab="html" data-i18n="html"></button>
         </div>
-        <div class="empty" id="empty-note" data-i18n="nothingSelected"></div>
+        <div class="empty" id="empty-note">
+          <svg class="ic big"><use href="#i-hand"/></svg>
+          <p data-i18n="nothingSelected"></p>
+        </div>
         <div class="tab-body" id="tab-style"></div>
         <div class="tab-body" id="tab-settings" hidden></div>
         <div class="tab-body" id="tab-html" hidden>
@@ -115,24 +173,24 @@
 
   <!-- Dialogs -->
   <dialog id="image-dialog" class="dialog">
-    <header><h2 data-i18n="images"></h2><button class="btn ghost" data-close>✕</button></header>
+    <header><h2 data-i18n="images"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
     <div id="image-grid" class="image-grid"></div>
     <footer>
-      <label class="btn"><span data-i18n="upload"></span><input id="image-upload" type="file" accept="image/*" hidden></label>
+      <label class="btn"><svg class="ic"><use href="#i-upload"/></svg><span data-i18n="upload"></span><input id="image-upload" type="file" accept="image/*" hidden></label>
       <div class="spacer"></div>
-      <button class="btn" data-close data-i18n="cancel"></button>
+      <button class="btn ghost" data-close data-i18n="cancel"></button>
     </footer>
   </dialog>
 
   <dialog id="phone-dialog" class="dialog small">
-    <header><h2 data-i18n="phoneTitle"></h2><button class="btn ghost" data-close>✕</button></header>
+    <header><h2 data-i18n="phoneTitle"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
     <p data-i18n="phoneText"></p>
     <p class="phone-url"><a id="phone-url" target="_blank"></a></p>
     <p class="hint" data-i18n="phoneNote"></p>
     <footer><div class="spacer"></div><button class="btn primary" data-close data-i18n="close"></button></footer>
   </dialog>
 
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" hidden><span id="toast-text"></span><button id="toast-action" class="toast-action" hidden></button></div>
 
   <script src="/app/styles.js"></script>
   <script src="/app/editor.js"></script>

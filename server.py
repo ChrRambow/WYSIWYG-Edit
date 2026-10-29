@@ -51,6 +51,7 @@ class State:
         self.lock = threading.Lock()
         self.phone_server = None
         self.backed_up = set()
+        self.renders = {}  # page path -> HTML the editor shows (with the editor's markers)
 
 
 STATE = State()
@@ -72,23 +73,6 @@ def safe_path(rel):
 def find_scripts(source):
     """Return the <script> elements of a page with their positions."""
     return [{"text": m.group(0), "start": m.start(), "end": m.end()} for m in SCRIPT_RE.finditer(source)]
-
-
-def split_scripts(source):
-    """Replace every <script> element with an inert placeholder.
-
-    The editor shows the page with these placeholders so that the site's
-    JavaScript does not run (and change the page) while it is being edited.
-    The original script elements are returned so the editor can put them
-    back byte for byte when it saves.
-    """
-    scripts = []
-
-    def repl(match):
-        scripts.append(match.group(0))
-        return '<script type="text/x-wse-off" data-wse-idx="%d"></script>' % (len(scripts) - 1)
-
-    return SCRIPT_RE.sub(repl, source), scripts
 
 
 def read_text(path):
@@ -155,6 +139,7 @@ def open_folder(folder):
     with STATE.lock:
         STATE.root = folder
         STATE.backed_up = set()
+        STATE.renders = {}
     remember(folder)
     return folder
 
@@ -274,7 +259,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
             if url.path == "/api/page":
                 return self.api_page(query.get("path", [""])[0])
             if url.path.startswith("/site/"):
-                return self.serve_site(url.path[6:], "edit" in query)
+                return self.serve_site(url.path[6:], "wse-render" in query)
             if url.path == "/favicon.ico":
                 return self.send_file(APP_DIR / "icon.svg")
             return self.send_error_json(404, "Not found")
@@ -299,6 +284,13 @@ class EditorHandler(SimpleHTTPRequestHandler):
                 return self.api_state()
             if url.path == "/api/save":
                 return self.api_save(self.read_json())
+            if url.path == "/api/render":
+                data = self.read_json()
+                target = safe_path(data.get("path", ""))
+                if target.suffix.lower() not in HTML_EXT or not isinstance(data.get("html"), str):
+                    raise ValueError("Only HTML pages can be shown")
+                STATE.renders[target] = data["html"]
+                return self.send_json({"ok": True})
             if url.path == "/api/upload":
                 return self.api_upload(query)
             if url.path == "/api/phone":
@@ -311,7 +303,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
 
     # -- site files
 
-    def serve_site(self, rel, edit_mode):
+    def serve_site(self, rel, rendered):
         target = safe_path(rel)
         if target.is_dir():
             if not self.path.split("?")[0].endswith("/"):
@@ -322,9 +314,10 @@ class EditorHandler(SimpleHTTPRequestHandler):
             target = target / "index.html"
         if not target.is_file():
             raise FileNotFoundError(rel)
-        if edit_mode and target.suffix.lower() in HTML_EXT:
-            html, _ = split_scripts(read_text(target)[0])
-            return self.send_file(target, html.encode("utf-8"), utf8=True)
+        if rendered and target in STATE.renders:
+            # The page as the editor shows it: the user's unsaved changes plus
+            # markers that let the editor match what it shows to the file.
+            return self.send_file(target, STATE.renders[target].encode("utf-8"), utf8=True)
         return self.send_file(target)
 
     # -- api
