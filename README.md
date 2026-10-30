@@ -50,7 +50,7 @@ To try it out, open the included `example-site` folder.
 | **Use page** | **Use page** lets you click the page like a visitor (open the mobile menu, switch tabs, move a slider) to reach content you want to edit. `Esc` goes back to editing. What you opened stays open while you edit, but is saved the way it was. |
 | **Same on every page** | Header, menu and footer are usually the same on all pages. The editor notices this ("Same on 12 more pages" at the bottom when you select something in them). When you change such a part and save, it offers to make the same change on all those pages. Each page keeps its own highlighted menu entry. |
 | **Duplicate, delete** | With the buttons above the selected element (↑ ↓ also move it one step), or `Delete` on the keyboard. |
-| **Styles** | The **Style** panel changes font, size, color, alignment, background, spacing, size, layout, borders and shadows. |
+| **Styles** | The **Style** panel changes font, size, color, alignment, background, spacing, size, layout, borders and shadows. Every color has an opacity slider for see-through colors (the swatch shows a checkerboard behind them); a newly picked color keeps the opacity. |
 | **Responsive** | Switch between **Desktop**, **Tablet** and **Mobile** at the top. Style changes made in Tablet or Mobile only apply to those screen sizes, and you can hide elements on one size only. |
 | **HTML** | The **HTML** tab shows the code of the selected element for small fixes. |
 | **Undo / redo** | The arrows at the top, or `Cmd+Z` / `Cmd+Shift+Z`. |

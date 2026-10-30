@@ -481,6 +481,17 @@ async function waitForServer() {
     await page.locator('.design-row[title="--color-primary"] input[type=text]').fill('#16a34a');
     await page.locator('.design-row[title="--color-primary"] input[type=text]').press('Enter');
     assert.strictEqual(await live(() => getComputedStyle(WSE.state.doc.documentElement).getPropertyValue('--color-primary').trim()), '#16a34a');
+    // The opacity slider makes a color see-through; a picked color keeps that opacity.
+    const border = page.locator('.design-row[title="--color-border"]');
+    await border.locator('input[type=range]').fill('50');
+    assert.match(await border.locator('input[type=text]').inputValue(), /^rgba\(\d+, \d+, \d+, 0\.5\)$/);
+    await border.locator('input[type=color]').evaluate((i) => {
+      i.value = '#336699';
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      i.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    assert.strictEqual(await border.locator('input[type=text]').inputValue(), 'rgba(51, 102, 153, 0.5)');
+    assert.strictEqual(await border.locator('.alpha-value').innerText(), '50 %');
     await page.click('#btn-page-settings');
     await page.fill('#ps-desc', 'When we are open & how to find us.');
     await page.click('#ps-apply');
@@ -489,6 +500,7 @@ async function waitForServer() {
     await sleep(300);
     const css = fs.readFileSync(path.join(made, 'css', 'style.css'), 'utf8');
     assert.match(css, /--color-primary: #16a34a;/);
+    assert.match(css, /--color-border: rgba\(51, 102, 153, 0\.5\);/);
     const hours2 = fs.readFileSync(path.join(made, 'opening-hours.html'), 'utf8');
     assert.ok(hours2.includes('<meta name="description" content="When we are open &amp; how to find us.">'));
     assert.ok(hours2.includes('src="images/placeholder.svg"'));

@@ -114,10 +114,84 @@
     return path.split('/').map(encodeURIComponent).join('/');
   }
 
-  function rgbToHex(value) {
-    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value || '');
-    if (!m) return /^#[0-9a-f]{6}$/i.test(value) ? value : '#000000';
-    return '#' + [m[1], m[2], m[3]].map(function (n) { return ('0' + (+n).toString(16)).slice(-2); }).join('');
+  /* A CSS color as { r, g, b, a }, or null when it cannot be worked out here. */
+  function parseColor(value) {
+    if (!value || /var\(|^\s*(inherit|initial|unset|revert|currentcolor)\s*$/i.test(value)) return null;
+    var probe = document.createElement('span');
+    probe.style.color = value;
+    if (!probe.style.color) return null;
+    document.body.appendChild(probe);
+    var m = /^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/.exec(getComputedStyle(probe).color);
+    probe.remove();
+    return m ? { r: Math.round(+m[1]), g: Math.round(+m[2]), b: Math.round(+m[3]), a: m[4] === undefined ? 1 : +m[4] } : null;
+  }
+
+  function colorString(c) {
+    if (c.a >= 1) return '#' + [c.r, c.g, c.b].map(function (n) { return ('0' + n.toString(16)).slice(-2); }).join('');
+    return 'rgba(' + c.r + ', ' + c.g + ', ' + c.b + ', ' + Math.round(c.a * 100) / 100 + ')';
+  }
+
+  /*
+   * A color field: a swatch that shows transparency (and opens the browser's
+   * color picker), the CSS value as text and an opacity slider. The browser's
+   * picker knows no transparency, so a picked color keeps the current opacity.
+   * apply(value) is called when a change is done, live(value) while dragging.
+   */
+  function colorControl(apply, live) {
+    var fill = el('span', { 'class': 'color-swatch-fill' });
+    var pick = el('input', { type: 'color' });
+    var text = el('input', { type: 'text', 'class': 'unit', spellcheck: 'false' });
+    var range = el('input', { type: 'range', min: '0', max: '100', step: '1', title: t('opacity') });
+    var amount = el('span', { 'class': 'alpha-value' });
+    var current = null, value = '';
+    function show(c) {
+      var solid = c ? colorString({ r: c.r, g: c.g, b: c.b, a: 1 }) : '#000000';
+      fill.style.background = c ? colorString(c) : 'transparent';
+      pick.value = solid;
+      range.style.setProperty('--alpha-color', solid);
+      range.value = String(c ? Math.round(c.a * 100) : 100);
+      amount.textContent = range.value + ' %';
+    }
+    function preview(c) {
+      text.value = colorString(c);
+      show(c);
+      if (live) live(text.value);
+    }
+    function done() {
+      value = text.value;
+      current = parseColor(value);
+      apply(value);
+    }
+    pick.addEventListener('input', function () {
+      var n = parseInt(pick.value.slice(1), 16);
+      // A fully transparent color would stay invisible: picking makes it solid.
+      preview({ r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, a: current && current.a > 0 ? current.a : 1 });
+    });
+    pick.addEventListener('change', done);
+    range.addEventListener('input', function () {
+      var base = current || parseColor(pick.value);
+      preview({ r: base.r, g: base.g, b: base.b, a: +range.value / 100 });
+    });
+    range.addEventListener('change', done);
+    text.addEventListener('change', function () {
+      var v = text.value.trim();
+      if (v && !CSS.supports('color', v)) { text.value = value; return; }
+      text.value = v;
+      done();
+    });
+    return {
+      node: el('div', { 'class': 'color-field' }, [
+        el('span', { 'class': 'color-swatch' }, [fill, pick]), text,
+        el('label', { 'class': 'alpha-row' }, [el('span', { text: t('opacity') }), range, amount])
+      ]),
+      set: function (v, placeholder) {
+        value = v || '';
+        text.value = value;
+        text.placeholder = placeholder || '';
+        current = parseColor(value) || parseColor(placeholder);
+        show(current);
+      }
+    };
   }
 
   function escapeHtml(s) {
@@ -1666,14 +1740,9 @@
         sel.options[0].textContent = ph ? '– (' + ph + ')' : '–';
       };
     } else if (def.type === 'color') {
-      var color = el('input', { type: 'color' });
-      var text = el('input', { type: 'text', 'class': 'unit', spellcheck: 'false' });
-      color.addEventListener('input', function () { text.value = color.value; });
-      color.addEventListener('change', function () { setStyle(def.prop, color.value); });
-      text.addEventListener('change', function () { setStyle(def.prop, text.value); });
-      fieldBox.appendChild(color);
-      fieldBox.appendChild(text);
-      ctl.set = function (v, ph) { color.value = rgbToHex(v || ph); text.value = v; text.placeholder = ph; };
+      var colorBox = colorControl(function (v) { setStyle(def.prop, v); });
+      fieldBox.appendChild(colorBox.node);
+      ctl.set = colorBox.set;
     } else if (def.type === 'buttons') {
       var btns = def.options.map(function (o) {
         var b = el('button', { 'class': 'seg', title: o[0], text: o[1], onclick: function () { setStyle(def.prop, o[0]); } });
@@ -3800,22 +3869,9 @@
     return Object.prototype.hasOwnProperty.call(design.edits, v.name) ? design.edits[v.name] : v.value;
   }
 
-  function cssColorToHex(value) {
-    var probe = document.createElement('span');
-    probe.style.color = value;
-    document.body.appendChild(probe);
-    var rgb = getComputedStyle(probe).color;
-    probe.remove();
-    return rgbToHex(rgb);
-  }
-
-  function colorAlpha(value) {
-    var probe = document.createElement('span');
-    probe.style.color = value;
-    document.body.appendChild(probe);
-    var m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(getComputedStyle(probe).color);
-    probe.remove();
-    return m ? +m[1] : 1;
+  /* The value a variable has on the page, with other variables filled in. */
+  function resolvedVar(name) {
+    try { return state.win.getComputedStyle(state.doc.documentElement).getPropertyValue(name).trim(); } catch (e) { return ''; }
   }
 
   function setDesign(v, value) {
@@ -3868,26 +3924,13 @@
     if (groups.color.length) {
       root.appendChild(el('h3', { text: t('designColors') }));
       groups.color.forEach(function (v) {
-        var value = designValue(v);
-        var pick = el('input', { type: 'color', value: cssColorToHex(value) });
-        var text = el('input', { type: 'text', value: value, spellcheck: 'false' });
-        pick.addEventListener('input', function () {
-          // Keep the transparency of the color (the color picker has none).
-          var alpha = colorAlpha(v.value), val = pick.value;
-          if (alpha < 1) {
-            var n = parseInt(val.slice(1), 16);
-            val = 'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', ' + alpha + ')';
-          }
-          text.value = val;
-          setDesign(v, val);
-        });
-        text.addEventListener('change', function () {
-          var val = text.value.trim();
-          if (val && !CSS.supports('color', val)) { text.value = designValue(v); return; }
+        var colorBox = colorControl(function (val) {
           setDesign(v, val || v.value);
-          pick.value = cssColorToHex(designValue(v));
-        });
-        root.appendChild(row(v, el('span', { 'class': 'color-pair' }, [pick, text])));
+          colorBox.set(designValue(v), resolvedVar(v.name));
+          refreshStylePanel();
+        }, function (val) { setDesign(v, val); });
+        colorBox.set(designValue(v), resolvedVar(v.name));
+        root.appendChild(row(v, colorBox.node));
       });
     }
     if (groups.font.length) {
