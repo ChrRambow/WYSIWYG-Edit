@@ -22,6 +22,12 @@ install on a Mac) plus the editor in your web browser.
    folder that contains `index.html`).
 4. Keep the Terminal window open while you work. Close it (or press
    `Ctrl+C`) to stop the editor.
+5. After an update, close the Terminal window and start the editor again.
+   If the old version is still running, the editor shows a reminder.
+
+New websites go into `Documents/Websites` unless you choose another folder.
+The first time, macOS may ask whether Terminal may use the Documents folder;
+allow it, or the website cannot be saved there.
 
 From the Terminal you can also run it directly:
 

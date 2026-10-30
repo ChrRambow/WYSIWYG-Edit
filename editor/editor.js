@@ -398,7 +398,17 @@
       });
       $('#recent-wrap').hidden = !(data.recent || []).length;
       state.platform = data.platform;
+      checkServer(data);
     }).catch(fail);
+  }
+
+  /*
+   * After an update, the server that is still running is the old one: the
+   * editor's pages are new, but new features of the server are missing.
+   */
+  var API_VERSION = 4;
+  function checkServer(data) {
+    $('#restart-note').hidden = data.api === API_VERSION && !data.restart;
   }
 
   function openFolder(path) {
@@ -407,7 +417,7 @@
 
   $('#choose-folder').addEventListener('click', function () {
     if (state.platform !== 'darwin') { $('#path-input').focus(); return; } // the folder dialog needs macOS
-    api('/api/choose-folder', {}).then(function (data) {
+    api('/api/choose-folder', { prompt: t('chooseFolderPrompt') }).then(function (data) {
       if (!data.cancelled) openSite(data);
     }, function (e) { showStart(e.message); });
   });
@@ -483,6 +493,7 @@
       state.platform = data.platform;
       if (!$('#ns-parent').value) $('#ns-parent').value = data.defaultParent || '';
       $('#ns-pick').hidden = data.platform !== 'darwin';
+      checkServer(data);
       nsNote();
     }).catch(fail);
     renderNewSite();
@@ -556,10 +567,25 @@
   $('#ns-back').addEventListener('click', function () { showStart(); });
   $('#ns-name').addEventListener('input', function () { nsNote(); nsPreview(); });
   $('#ns-parent').addEventListener('input', nsNote);
+  function nsError(msg) {
+    var error = $('#ns-error');
+    error.textContent = msg ? t('error', { msg: msg }) : '';
+    error.hidden = !msg;
+    if (msg) error.scrollIntoView({ block: 'nearest' });
+  }
+
   $('#ns-pick').addEventListener('click', function () {
-    api('/api/pick-folder', {}).then(function (data) {
-      if (data.path) { $('#ns-parent').value = data.path; nsNote(); }
-    }).catch(fail);
+    var button = $('#ns-pick');
+    nsError('');
+    // The folder window opens outside the browser; say so while it is open.
+    button.disabled = true;
+    button.textContent = t('nsPicking');
+    api('/api/pick-folder', { prompt: t('nsPickPrompt'), start: $('#ns-parent').value.trim() }).then(function (data) {
+      if (data.path) { $('#ns-parent').value = data.path.replace(/\/+$/, ''); nsNote(); }
+    }, function (e) { nsError(e.message); }).then(function () {
+      button.disabled = false;
+      button.textContent = t('nsPick');
+    });
   });
   $$('.ns-device').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -572,8 +598,7 @@
 
   $('#ns-create').addEventListener('click', function () {
     var name = $('#ns-name').value.trim();
-    var error = $('#ns-error');
-    error.hidden = true;
+    nsError('');
     if (!name) { $('#ns-name').focus(); return; }
     var button = $('#ns-create'), label = button.querySelector('span');
     button.disabled = true;
@@ -584,8 +609,7 @@
       $('#ns-name').value = '';
       openSite(data);
     }, function (e) {
-      error.textContent = t('error', { msg: e.message });
-      error.hidden = false;
+      nsError(e.message);
     }).then(function () {
       button.disabled = false;
       label.textContent = t('nsCreate');
@@ -4158,6 +4182,7 @@
   buildStylePanel();
   updateStatus();
   api('/api/state').then(function (data) {
+    checkServer(data);
     if (data.root) openSite(data); else showStart();
   }).catch(fail);
 

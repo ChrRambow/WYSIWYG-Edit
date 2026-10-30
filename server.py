@@ -36,6 +36,12 @@ NEW_SITE_EXT = {".html", ".css", ".js", ".svg", ".txt", ".json"}
 SKIP_DIRS = {".git", "node_modules", ".wysiwyg-edit", "__pycache__"}
 MAX_UPLOAD = 50 * 1024 * 1024
 
+# The editor compares this with its own number: a server still running from
+# before an update lacks newer features and has to be restarted.
+API_VERSION = 4
+SERVER_FILE = Path(__file__).resolve()
+STARTED_MTIME = SERVER_FILE.stat().st_mtime
+
 SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.I | re.S)
 
 mimetypes.add_type("image/svg+xml", ".svg")
@@ -146,15 +152,54 @@ def open_folder(folder):
     return folder
 
 
-def choose_folder_dialog(prompt="Choose the folder of your website"):
+def applescript_text(text):
+    return str(text).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def existing_folder(path):
+    """The folder itself or its nearest parent that exists, or None."""
+    if not path:
+        return None
+    folder = Path(str(path)).expanduser()
+    if not folder.is_absolute():
+        return None
+    for candidate in [folder] + list(folder.parents):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def choose_folder_dialog(prompt=None, start=None):
     """Show the native macOS folder picker. Returns None if cancelled."""
     if sys.platform != "darwin":
         raise RuntimeError("The folder dialog is only available on macOS. Please type the path.")
-    script = 'POSIX path of (choose folder with prompt "%s")' % prompt.replace('"', "'")
-    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+    prompt = str(prompt or "Choose the folder of your website")[:200]
+    choose = 'choose folder with prompt "%s"' % applescript_text(prompt)
+    folder = existing_folder(start)
+    if folder:
+        choose += ' default location (POSIX file "%s")' % applescript_text(folder)
+    # The server runs in the background, so the dialog could open hidden
+    # behind the browser window: bring it to the front first.
+    attempts = [["tell me to activate", "POSIX path of (%s)" % choose], ["POSIX path of (%s)" % choose]]
+    for lines in attempts:
+        args = ["osascript"]
+        for line in lines:
+            args += ["-e", line]
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        if "-128" in result.stderr:  # the user clicked Cancel
+            return None
+    raise RuntimeError("The folder dialog did not open (%s). Please type the path instead."
+                       % (result.stderr.strip() or "osascript failed"))
+
+
+def server_changed():
+    """True when server.py was updated on disk after this server started."""
+    try:
+        return SERVER_FILE.stat().st_mtime != STARTED_MTIME
+    except OSError:
+        return False
 
 
 def default_parent():
@@ -168,7 +213,10 @@ def create_site(parent, name, files):
     name = (name or "").strip()
     if not name or name in (".", "..") or re.search(r"[/\\:\x00]", name):
         raise ValueError("Please choose a name without / or :")
-    folder = (Path(parent or default_parent()).expanduser() / name).resolve()
+    base = Path(str(parent or default_parent()).strip()).expanduser()
+    if not base.is_absolute():
+        base = Path.home() / base
+    folder = (base / name).resolve()
     if folder.exists() and (not folder.is_dir() or any(folder.iterdir())):
         raise ValueError("The folder %s already exists and is not empty" % folder)
     checked = []
@@ -182,10 +230,16 @@ def create_site(parent, name, files):
         checked.append((rel, content))
     if not any(rel.suffix.lower() in HTML_EXT for rel, _ in checked):
         raise ValueError("A website needs at least one page")
-    for rel, content in checked:
-        target = folder.joinpath(*rel.parts)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content.encode("utf-8"))
+    try:
+        for rel, content in checked:
+            target = folder.joinpath(*rel.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content.encode("utf-8"))
+    except PermissionError:
+        raise ValueError("No permission to write to %s. Choose another folder, or allow Terminal to use it "
+                         "(System Settings > Privacy & Security > Files and Folders)." % folder.parent)
+    except OSError as e:
+        raise ValueError("The website could not be written to %s (%s)." % (folder, e.strerror or e))
     return open_folder(folder)
 
 
@@ -358,13 +412,15 @@ class EditorHandler(SimpleHTTPRequestHandler):
             if url.path == "/api/open":
                 return self.api_open(self.read_json())
             if url.path == "/api/choose-folder":
-                path = choose_folder_dialog()
+                data = self.read_json()
+                path = choose_folder_dialog(data.get("prompt"), data.get("start"))
                 if not path:
                     return self.send_json({"cancelled": True})
                 open_folder(path)
                 return self.api_state()
             if url.path == "/api/pick-folder":
-                path = choose_folder_dialog("Where should the new website be saved?")
+                data = self.read_json()
+                path = choose_folder_dialog(data.get("prompt") or "Where should the new website be saved?", data.get("start"))
                 return self.send_json({"cancelled": True} if not path else {"path": path})
             if url.path == "/api/create-site":
                 data = self.read_json()
@@ -429,7 +485,8 @@ class EditorHandler(SimpleHTTPRequestHandler):
     # -- api
 
     def api_state(self):
-        data = {"root": None, "recent": load_recent(), "platform": sys.platform, "defaultParent": default_parent()}
+        data = {"root": None, "recent": load_recent(), "platform": sys.platform, "defaultParent": default_parent(),
+                "api": API_VERSION, "restart": server_changed()}
         if STATE.root is not None:
             pages, images = list_site()
             data.update(root=str(STATE.root), name=STATE.root.name, pages=pages, images=images)

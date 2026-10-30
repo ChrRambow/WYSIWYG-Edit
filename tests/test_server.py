@@ -66,6 +66,15 @@ class NewSiteTests(unittest.TestCase):
         self.assertTrue((folder / "css" / "style.css").is_file())
         self.assertEqual(server.STATE.root, folder)
 
+    def test_relative_parent_is_in_the_home_folder(self):
+        home = server.Path.home
+        server.Path.home = classmethod(lambda cls: self.parent)
+        try:
+            folder = server.create_site("Websites", "A", [{"path": "index.html", "content": "x"}])
+        finally:
+            server.Path.home = home
+        self.assertEqual(folder, (self.parent / "Websites" / "A").resolve())
+
     def test_refuses_bad_input(self):
         page = [{"path": "index.html", "content": "x"}]
         for name in ("", "a/b", "..", "x:y"):
@@ -80,6 +89,47 @@ class NewSiteTests(unittest.TestCase):
         (self.parent / "full" / "keep.txt").write_text("x")
         with self.assertRaises(ValueError):
             server.create_site(str(self.parent), "full", page)
+
+
+class FolderDialogTests(unittest.TestCase):
+    """The macOS folder dialog, with osascript replaced by a stand-in."""
+
+    def setUp(self):
+        self.platform, self.run = server.sys.platform, server.subprocess.run
+        server.sys.platform = "darwin"
+        self.calls = []
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        server.sys.platform, server.subprocess.run = self.platform, self.run
+        self.tmp.cleanup()
+
+    def answer(self, *results):
+        results = list(results)
+
+        def run(args, **kwargs):
+            self.calls.append(args)
+            code, out, err = results.pop(0)
+            return server.subprocess.CompletedProcess(args, code, out, err)
+        server.subprocess.run = run
+
+    def test_dialog_comes_to_the_front_and_starts_in_the_folder(self):
+        self.answer((0, "/Users/x/Sites/\n", ""))
+        start = Path(self.tmp.name) / "not yet" / "there"
+        self.assertEqual(server.choose_folder_dialog('Wo "hin"?', str(start)), "/Users/x/Sites/")
+        script = self.calls[0]
+        self.assertEqual(script[1:3], ["-e", "tell me to activate"])
+        self.assertIn('with prompt "Wo \\"hin\\"?"', script[4])
+        self.assertIn('default location (POSIX file "%s")' % Path(self.tmp.name), script[4])
+
+    def test_cancel_and_errors(self):
+        self.answer((1, "", "execution error: User canceled. (-128)"))
+        self.assertIsNone(server.choose_folder_dialog())
+        self.answer((1, "", "error A (-1713)"), (1, "", "error B (-1713)"))
+        with self.assertRaises(RuntimeError) as caught:
+            server.choose_folder_dialog()
+        self.assertIn("error B", str(caught.exception))
+        self.assertNotIn("tell me to activate", self.calls[-1], "second try without bringing it to the front")
 
 
 class RenameTests(unittest.TestCase):
