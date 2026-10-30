@@ -45,6 +45,7 @@
       <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c1 0 1.6-.8 1.6-1.6 0-.5-.2-.8-.5-1.1-.3-.3-.5-.7-.5-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4-4-7.6-9-7.6z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7" r="1.2"/><circle cx="14.5" cy="7" r="1.2"/><circle cx="17" cy="11" r="1.2"/></symbol>
       <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></symbol>
       <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+      <symbol id="i-images" viewBox="0 0 24 24"><rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h11a3 3 0 0 1 3 3v11"/><circle cx="8" cy="11" r="1.5"/><path d="M3 18l4-4 3 3 3-3 4 4"/></symbol>
       <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
     </defs>
   </svg>
@@ -178,6 +179,7 @@
               <button data-act="down" data-i18n-title="moveDown"><svg class="ic"><use href="#i-down"/></svg></button>
               <button data-act="edit" data-i18n-title="editText"><svg class="ic"><use href="#i-pencil"/></svg></button>
               <button data-act="image" data-i18n-title="changeImage"><svg class="ic"><use href="#i-image"/></svg></button>
+              <button data-act="items" class="labeled" data-i18n-title="manageItemsHint"><svg class="ic"><use href="#i-images"/></svg><span data-i18n="manageItems"></span></button>
               <button data-act="toggle" data-i18n-title="toggleOpen"><svg class="ic"><use href="#i-toggle"/></svg></button>
               <button data-act="duplicate" data-i18n-title="duplicate"><svg class="ic"><use href="#i-copy"/></svg></button>
               <button data-act="delete" class="danger" data-i18n-title="remove"><svg class="ic"><use href="#i-trash"/></svg></button>
@@ -209,6 +211,7 @@
         <div class="empty" id="empty-note">
           <svg class="ic big"><use href="#i-hand"/></svg>
           <p data-i18n="nothingSelected"></p>
+          <div id="page-lists" class="page-lists" hidden></div>
         </div>
         <div class="tab-body" id="tab-style"></div>
         <div class="tab-body" id="tab-settings" hidden></div>
@@ -262,6 +265,19 @@
       <p id="ps-error" class="error" hidden></p>
     </form>
     <footer><button class="btn ghost danger-text" id="ps-delete"><svg class="ic"><use href="#i-trash"/></svg><span data-i18n="psDelete"></span></button><div class="spacer"></div><button class="btn ghost" data-close data-i18n="cancel"></button><button class="btn primary" id="ps-apply" data-i18n="psApply"></button></footer>
+  </dialog>
+
+  <dialog id="items-dialog" class="dialog wide">
+    <header><h2 id="items-title"></h2><button class="icon-btn" data-close><svg class="ic"><use href="#i-x"/></svg></button></header>
+    <div id="items-settings" class="items-settings" hidden></div>
+    <p class="hint items-help" data-i18n="itemsHelp"></p>
+    <div id="items-grid" class="items-grid"></div>
+    <footer>
+      <button class="btn" id="items-add"><svg class="ic"><use href="#i-plus"/></svg><span id="items-add-label"></span></button>
+      <label class="btn"><svg class="ic"><use href="#i-upload"/></svg><span data-i18n="itemUpload"></span><input id="items-upload" type="file" accept="image/*" multiple hidden></label>
+      <div class="spacer"></div>
+      <button class="btn primary" data-close data-i18n="done"></button>
+    </footer>
   </dialog>
 
   <dialog id="shared-dialog" class="dialog small">

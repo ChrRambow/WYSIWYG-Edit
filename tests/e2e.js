@@ -58,6 +58,7 @@ async function waitForServer() {
   fs.copyFileSync(path.join(__dirname, 'fixtures', 'fixed-header.html'), path.join(site, 'fixed-header.html'));
   fs.copyFileSync(path.join(__dirname, 'fixtures', 'menu-accordion.html'), path.join(site, 'menu-accordion.html'));
   fs.copyFileSync(path.join(__dirname, 'fixtures', 'menu-page2.html'), path.join(site, 'menu-page2.html'));
+  fs.copyFileSync(path.join(__dirname, 'fixtures', 'slides.html'), path.join(site, 'slides.html'));
   const originalIndex = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
 
   const server = spawn('python3', [path.join(ROOT, 'server.py'), site, '--port', String(PORT), '--no-browser'],
@@ -371,29 +372,73 @@ async function waitForServer() {
     assert.ok(!/main-menu open|<details open>\s*<summary>Nachhaltigkeit/.test(menuSaved), 'opened things are not saved open');
     assert.match(menuSaved, /<summary>Prophylaxe<\/summary>[\s\S]*<summary>Nachhaltigkeit<\/summary>/);
 
-    // 21. The preview serves the real page with its scripts.
+    // 21. Slideshows and carousels: their pictures and captions are changed in one dialog.
+    await page.selectOption('#page-select', 'slides.html');
+    await page.waitForFunction(() => WSE.state.page === 'slides.html' && WSE.ready());
+    await sleep(300);
+    assert.strictEqual(await page.locator('.page-list').count(), 2, 'both picture lists are offered');
+    await page.locator('.page-list', { hasText: 'Slideshow' }).click();
+    await page.waitForSelector('#items-dialog[open]');
+    const slides = () => live(() => WSE.state.src.querySelector('.bg-slider').getAttribute('data-slides'));
+    await page.locator('.item-card').nth(0).locator('button[title="Remove"]').click();
+    await page.locator('.item-card').nth(1).locator('button[title="Move to the front"]').click();
+    assert.strictEqual(await slides(), 'images/logo.svg, images/cake.svg');
+    await page.click('#items-add');
+    await page.click('.thumb[title="images/bread.svg"]');
+    await page.waitForFunction(() => document.querySelectorAll('.item-card').length === 3);
+    assert.strictEqual(await slides(), 'images/logo.svg, images/cake.svg, images/bread.svg');
+    await page.click('#items-dialog footer .btn.primary');
+    await settle();
+    assert.strictEqual(await live(() => WSE.state.doc.querySelectorAll('.bg-slider .slide').length), 3, 'the page script shows the new slides');
+    // A picture of the team carousel opens the same dialog from the toolbar.
+    await frame().locator('.carousel-item img').first().click();
+    await page.click('#el-toolbar [data-act="items"]');
+    await page.waitForSelector('#items-dialog[open]');
+    const caption = page.locator('.item-card').nth(0).locator('input').first();
+    await caption.fill('Lisa – Rezeption');
+    await caption.press('Enter');
+    await page.locator('.item-card').nth(2).locator('button[title="Move to the front"]').click();
+    await page.locator('#items-upload').setInputFiles(path.join(ROOT, 'example-site', 'images', 'cake.svg'));
+    await page.waitForFunction(() => document.querySelectorAll('.item-card').length === 4);
+    await page.click('#items-dialog footer .btn.primary');
+    await settle();
+    await page.click('#btn-save');
+    await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
+    const slidesSaved = fs.readFileSync(path.join(site, 'slides.html'), 'utf8');
+    assert.ok(slidesSaved.includes('data-slides="images/logo.svg, images/cake.svg, images/bread.svg"'));
+    assert.ok(!slidesSaved.includes('class="slide'), 'slides made by the page script are not saved');
+    assert.ok(fs.existsSync(path.join(site, 'images', 'cake-2.svg')), 'uploaded picture keeps the old one');
+    const figures = slidesSaved.match(/\n {10}<figure class="carousel-item">.*<\/figure>/g).map((f) => f.trim());
+    assert.deepStrictEqual(figures, [
+      '<figure class="carousel-item"><img src="images/bread.svg" alt="Lisa" loading="lazy"><figcaption>Lisa – Rezeption</figcaption></figure>',
+      '<figure class="carousel-item"><img src="images/logo.svg" alt="Marnie" loading="lazy"><figcaption>Marnie – Labor</figcaption></figure>',
+      '<figure class="carousel-item"><img src="images/cake.svg" alt="Beate" loading="lazy"><figcaption>Beate – Prophylaxe</figcaption></figure>',
+      '<figure class="carousel-item"><img src="images/cake-2.svg" alt="cake 2" loading="lazy"><figcaption></figcaption></figure>'
+    ], 'entries changed in place, each on its own line');
+
+    // 22. The preview serves the real page with its scripts.
     const preview = await browser.newPage();
     await preview.goto(BASE + 'site/index.html');
     assert.strictEqual(await preview.locator('#year').innerText(), String(new Date().getFullYear()), 'scripts run in preview');
 
-    // 22. Writes are refused without the editor's header.
+    // 23. Writes are refused without the editor's header.
     const res = await fetch(BASE + 'api/save', { method: 'POST', body: '{"path":"index.html","content":"x"}' });
     assert.strictEqual(res.status, 403);
 
-    // 23. Without a folder the start screen opens a site from a typed path.
+    // 24. Without a folder the start screen opens a site from a typed path.
     await live(() => { WSE.state.savedKey = ''; });
     await page.click('#btn-folder');
     await page.fill('#path-input', path.join(site));
     await page.click('#path-form button');
     await page.waitForFunction(() => !document.querySelector('#app').hidden && WSE.ready());
 
-    // 24. The phone preview serves the site read-only on the network.
+    // 25. The phone preview serves the site read-only on the network.
     const phone = await (await fetch(BASE + 'api/phone', { method: 'POST', headers: { 'X-WSE': '1' } })).json();
     const port = new URL(phone.url).port;
     assert.strictEqual((await fetch(`http://127.0.0.1:${port}/index.html`)).status, 200);
     assert.strictEqual((await fetch(`http://127.0.0.1:${port}/../../etc/passwd`)).status, 404);
 
-    // 25. A new website from a template, without any code.
+    // 26. A new website from a template, without any code.
     await page.click('#btn-folder');
     await page.click('#btn-new-site');
     await page.fill('#ns-name', 'Bakery Sunshine');
@@ -411,7 +456,7 @@ async function waitForServer() {
     assert.strictEqual(await frame().locator('.nav a[aria-current="page"]').innerText(), 'Home');
     await page.waitForFunction(() => WSE.state.shared && WSE.state.shared.length === 2);
 
-    // 26. A new page, added to the menu on every page.
+    // 27. A new page, added to the menu on every page.
     await page.click('#btn-new-page');
     await page.fill('#np-title', 'Opening hours');
     assert.strictEqual(await page.inputValue('#np-file'), 'opening-hours.html');
@@ -427,7 +472,7 @@ async function waitForServer() {
     }
     assert.ok(fs.readFileSync(path.join(made, 'contact.html'), 'utf8').includes('<a href="contact.html" aria-current="page">Contact</a>'));
 
-    // 27. Ready-made sections, the Design tab and the page settings.
+    // 28. Ready-made sections, the Design tab and the page settings.
     await page.click('.block[data-block="blkTeam"]');
     await settle();
     assert.strictEqual(await frame().locator('main > section').count(), 3, 'team section added to the main area');
@@ -449,7 +494,7 @@ async function waitForServer() {
     assert.ok(hours2.includes('src="images/placeholder.svg"'));
     await page.click('.ltab[data-ltab="add"]');
 
-    // 28. Renaming a page changes the links to it; deleting it takes it out of the menus.
+    // 29. Renaming a page changes the links to it; deleting it takes it out of the menus.
     await page.click('#btn-page-settings');
     await page.fill('#ps-file', 'hours.html');
     await page.click('#ps-apply');
@@ -462,6 +507,35 @@ async function waitForServer() {
     for (const other of ['index.html', 'about.html']) {
       assert.ok(!fs.readFileSync(path.join(made, other), 'utf8').includes('hours.html'), 'menu entry removed on ' + other);
     }
+    // 30. A new carousel: pictures side by side, format, arrows, dots and moving on by itself.
+    await page.click('.block[data-block="blkCarousel"]');
+    await settle();
+    assert.ok(fs.existsSync(path.join(made, 'js', 'carousel.js')), 'the carousel script is added to the site');
+    await live(() => WSE.select(null));
+    await page.locator('.page-list', { hasText: 'Carousel' }).click();
+    await page.waitForSelector('#items-dialog[open]');
+    await page.locator('.items-setting').nth(0).locator('button', { hasText: '2' }).click();
+    await page.locator('.items-setting').nth(1).locator('button', { hasText: 'Square' }).click();
+    await page.locator('.items-setting').nth(2).locator('button', { hasText: '3' }).click();
+    await page.locator('.items-setting').nth(3).locator('input').nth(1).check();
+    await page.click('#items-dialog footer .btn.primary');
+    await settle();
+    await page.click('#btn-save');
+    await page.waitForFunction(() => !document.querySelector('#btn-save').classList.contains('dirty'));
+    const home2 = fs.readFileSync(path.join(made, 'index.html'), 'utf8');
+    assert.ok(home2.includes('<div data-carousel data-per-view="2" data-autoplay="3" style="position:relative" data-dots="true">') ||
+      /<div data-carousel data-per-view="2" data-autoplay="3"[^>]*data-dots="true"/.test(home2), 'settings saved on the carousel');
+    assert.ok(home2.includes('<div data-carousel-track style='), 'no empty values on the markers');
+    assert.strictEqual((home2.match(/aspect-ratio:1\/1/g) || []).length, 4);
+    assert.ok(home2.includes('<script src="js/carousel.js"></script>'));
+    const visitor = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    await visitor.goto(BASE + 'site/index.html');
+    await visitor.locator('[data-carousel]').scrollIntoViewIfNeeded();
+    assert.strictEqual(await visitor.locator('.carousel-dots button').count(), 2, 'one dot per page of pictures');
+    await visitor.locator('[data-carousel-next]').click();
+    await visitor.waitForFunction(() => document.querySelector('[data-carousel-track]').scrollLeft > 0);
+    await visitor.close();
+
     fs.rmSync(parent, { recursive: true, force: true });
 
     assert.deepStrictEqual(errors, [], 'no page errors');

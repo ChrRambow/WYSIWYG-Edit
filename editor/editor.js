@@ -629,10 +629,12 @@
   var BOOLEAN_ATTRS = ('allowfullscreen async autofocus autoplay checked controls default defer disabled ' +
     'formnovalidate hidden inert ismap itemscope loop multiple muted nomodule novalidate open playsinline ' +
     'readonly required reversed selected').split(' ');
+  // Markers of the carousels this editor makes (see CAROUSEL_SCRIPT).
+  var EDITOR_BARE_ATTRS = ['data-carousel', 'data-carousel-track', 'data-carousel-prev', 'data-carousel-next'];
 
   function learnBareAttributes(bodySource) {
     state.bareAttrs = {};
-    BOOLEAN_ATTRS.forEach(function (a) { state.bareAttrs[a] = true; });
+    BOOLEAN_ATTRS.concat(EDITOR_BARE_ATTRS).forEach(function (a) { state.bareAttrs[a] = true; });
     var tagRe = /<[a-zA-Z][^\s\/>]*([^>]*)>/g, attrRe = /([^\s="'\/>]+)(\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g, m, a;
     while ((m = tagRe.exec(bodySource))) {
       attrRe.lastIndex = 0;
@@ -1113,6 +1115,7 @@
     var has = !!state.selected;
     $('#empty-note').hidden = has;
     renderCrumbs();
+    if (!has) renderPageLists();
     if (!has) {
       $('#tab-style').hidden = true;
       $('#tab-settings').hidden = true;
@@ -1127,6 +1130,8 @@
     $('#el-toolbar [data-act="edit"]').hidden = !textTarget(state.selected);
     $('#el-toolbar [data-act="image"]').hidden = state.selected.tagName !== 'IMG';
     $('#el-toolbar [data-act="toggle"]').hidden = !accordionOf(state.selected);
+    var list = state.src && twin(state.selected) ? listFor(twin(state.selected)) : null;
+    $('#el-toolbar [data-act="items"]').hidden = !list;
     refreshStylePanel();
     renderSettings();
     var s = twin(state.selected);
@@ -1232,6 +1237,11 @@
     }
     if (name === 'image') return changeImage();
     if (name === 'toggle') return toggleAccordion(accordionOf(node));
+    if (name === 'items') {
+      var list = s && listFor(s);
+      if (list) openItems(list);
+      return;
+    }
     if (name === 'drag' || !s) return; // drag is handled on mousedown
     if (name === 'up' || name === 'down') {
       var sib = srcElementSibling(s, name === 'up' ? -1 : 1);
@@ -1870,6 +1880,27 @@
   var GRID = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px';
   var CARD = 'padding:28px;border:1px solid ' + V.border + ';border-radius:' + V.radius + ';background:' + V.background;
 
+  /* A carousel that scrolls sideways; js/carousel.js adds arrows, dots and autoplay. */
+  function carouselHtml(perView, ratio, caption, autoplay) {
+    var arrow = function (dir, side, label, sign) {
+      return '  <button type="button" data-carousel-' + dir + ' aria-label="' + escapeHtml(label) + '" style="position:absolute;' + side +
+        ':-14px;top:calc(50% - 36px);width:42px;height:42px;border:0;border-radius:50%;background:' + V.primary + ';color:' + V.onPrimary +
+        ';font-size:24px;line-height:1;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.2)">' + sign + '</button>';
+    };
+    var item = '    <figure style="flex:' + itemWidth(perView) + ';margin:0;scroll-snap-align:start">\n' +
+      '      ' + placeholderImg(ratio) + '\n' +
+      '      <figcaption style="padding:10px 2px 0;font-weight:600">' + caption + '</figcaption>\n    </figure>';
+    var items = [];
+    for (var i = 0; i < 4; i++) items.push(item);
+    return ['<div data-carousel data-per-view="' + perView + '" data-autoplay="' + autoplay + '"' + (perView === 1 ? ' data-dots="true"' : '') + ' style="position:relative">',
+      '  <div data-carousel-track style="display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none">',
+      items.join('\n'),
+      '  </div>',
+      arrow('prev', 'left', t('prevSlide'), '‹'),
+      arrow('next', 'right', t('nextSlide'), '›'),
+      '</div>'].join('\n');
+  }
+
   var SECTION_BLOCKS = [
     { key: 'blkHero', thumb: 'hero', images: true, html: function () {
       return '<section style="padding:72px 20px;background:' + V.surface + '">\n' +
@@ -1913,6 +1944,12 @@
         ': <a href="tel:+491234567890">0123 456 7890</a><br>' + t('secEmail') + ': <a href="mailto:info@example.com">info@example.com</a></p>\n    </div>',
         '  <div style="' + CARD + '">\n      <h3>' + t('secHoursTitle') + '</h3>\n      <table style="border-collapse:collapse">\n' + rows + '\n      </table>\n    </div>',
         '</div>']);
+    } },
+    { key: 'blkCarousel', thumb: 'carousel', images: true, carousel: true, html: function () {
+      return sectionWrap(['<h2>' + t('secCarouselTitle') + '</h2>'].concat(carouselHtml(3, '3/4', t('secPersonCaption'), 0).split('\n')));
+    } },
+    { key: 'blkSlideshow', thumb: 'slideshow', images: true, carousel: true, html: function () {
+      return sectionWrap(carouselHtml(1, '16/9', t('secSlideCaption'), 5).split('\n'));
     } },
     { key: 'blkGallery', thumb: 'gallery', images: true, html: function () {
       var list = [];
@@ -1986,6 +2023,8 @@
     quote: '<path d="M10 10h5v6h-3c0 2 1 3 3 3v2c-3 0-5-2-5-5z" class="f"/><rect x="18" y="12" width="22" height="2" rx="1"/><rect x="18" y="17" width="16" height="2" rx="1"/>',
     cta: '<rect x="3" y="7" width="42" height="18" rx="4" class="f"/><rect x="7" y="12" width="16" height="3" rx="1.5" class="w"/><rect x="31" y="13" width="10" height="6" rx="3" class="w"/>',
     contact: '<rect x="4" y="6" width="19" height="20" rx="2" class="o"/><rect x="25" y="6" width="19" height="20" rx="2" class="o"/><rect x="7" y="10" width="12" height="2" rx="1" class="f"/><rect x="7" y="15" width="10" height="2" rx="1"/><rect x="28" y="10" width="12" height="2" rx="1" class="f"/><rect x="28" y="15" width="13" height="2" rx="1"/><rect x="28" y="19" width="13" height="2" rx="1"/>',
+    carousel: '<rect x="9" y="6" width="9" height="15" rx="2" class="o"/><rect x="20" y="6" width="9" height="15" rx="2" class="o"/><rect x="31" y="6" width="9" height="15" rx="2" class="o"/><circle cx="5" cy="13.5" r="3" class="f"/><circle cx="44" cy="13.5" r="3" class="f"/><rect x="10" y="24" width="7" height="2" rx="1"/><rect x="21" y="24" width="7" height="2" rx="1"/><rect x="32" y="24" width="7" height="2" rx="1"/>',
+    slideshow: '<rect x="7" y="4" width="34" height="19" rx="2" class="o"/><path d="M12 19l7-6 5 4 4-3 8 5" class="s"/><circle cx="20" cy="27" r="1.6" class="f"/><circle cx="24" cy="27" r="1.6"/><circle cx="28" cy="27" r="1.6"/>',
     gallery: '<rect x="5" y="4" width="11" height="11" rx="2" class="o"/><rect x="18" y="4" width="11" height="11" rx="2" class="o"/><rect x="31" y="4" width="11" height="11" rx="2" class="o"/><rect x="5" y="17" width="11" height="11" rx="2" class="o"/><rect x="18" y="17" width="11" height="11" rx="2" class="o"/><rect x="31" y="17" width="11" height="11" rx="2" class="o"/>'
   };
 
@@ -2051,8 +2090,10 @@
 
   function insertBlock(block, livePos) {
     if (!state.doc) return;
-    if (block.images && !block.ready) {
+    if ((block.images || block.carousel) && !block.ready) {
       ensurePlaceholder().then(function () {
+        return block.carousel ? ensureCarouselScript() : null;
+      }).then(function () {
         insertBlock({ html: block.html, section: block.section, ready: true }, livePos);
       }).catch(fail);
       return;
@@ -2823,6 +2864,545 @@
         go.forEach(function (part) { part.text = partText(srcById(part.id)); });
         return count;
       });
+    });
+  }
+
+  // ------------------------------------------------------------ pictures and entries: slideshows, carousels, galleries
+
+  /*
+   * Lists of alike things (the pictures of a carousel, the people of a team,
+   * the entries of a menu) and lists of pictures kept in an attribute (a
+   * background slideshow built by a script) are managed in one window, like
+   * the media managers of website builders: sort by dragging, change a
+   * picture or caption, add, duplicate, remove, or drop new pictures in.
+   */
+  var LIST_NAMES = /(slide|carousel|karussell|gallery|galerie|swiper|slick|lightbox|team)/i;
+  var NOT_ITEMS = /^(P|H[1-6]|SPAN|STRONG|EM|B|I|U|S|SMALL|BR|TD|TH|TR|TBODY|THEAD|SECTION|HEADER|FOOTER|MAIN|NAV|ASIDE|SCRIPT|STYLE|BUTTON|SOURCE|SUMMARY|FIGCAPTION)$/;
+  var IMAGE_LIST = /^\s*[^,\s]+\.(jpe?g|png|gif|webp|avif|svg)(\s*,\s*[^,\s]+\.(jpe?g|png|gif|webp|avif|svg))+\s*,?\s*$/i;
+  var itemsTarget = null, itemsDrag = null;
+
+  function itemSig(n) {
+    return n.tagName + '.' + Array.prototype.filter.call(n.classList, function (c) { return !MARK_CLASS.test(c) && !/^wse-/.test(c); }).sort().join('.');
+  }
+
+  function listNames(s) {
+    var names = function (n) { return n && n.nodeType === 1 ? (n.id || '') + ' ' + (n.getAttribute('class') || '') + ' ' +
+      Array.prototype.map.call(n.attributes, function (a) { return /^data-/.test(a.name) ? a.name : ''; }).join(' ') : ''; };
+    return names(s) + ' ' + names(s.parentNode);
+  }
+
+  function imageListAttr(s) {
+    var found = null;
+    Array.prototype.some.call(s.attributes, function (a) {
+      if (/^(src|srcset|style|href|class|id|alt|title|sizes)$/i.test(a.name) || !IMAGE_LIST.test(a.value)) return false;
+      found = a.name;
+      return true;
+    });
+    return found;
+  }
+
+  function attrImages(value) {
+    return value.split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+  }
+
+  function listItems(container, sig) {
+    return Array.prototype.filter.call(container.children, function (c) { return itemSig(c) === sig && c.hasAttribute(ID); });
+  }
+
+  function itemImage(item) {
+    return item.tagName === 'IMG' ? item : item.querySelector('img');
+  }
+
+  /* What a list is called: from its names, else from what is in it. */
+  function listKind(s, pictures) {
+    var names = listNames(s);
+    if (/slide/i.test(names)) return t('kind_slideshow');
+    if (/carousel|karussell|swiper|slick/i.test(names)) return t('kind_carousel');
+    if (/gallery|galerie|lightbox/i.test(names)) return t('kind_gallery');
+    return pictures ? t('kind_pictures') : t('kind_list');
+  }
+
+  /* The list a (source) element is part of, if it is worth managing as one. */
+  function listFor(s) {
+    for (var n = s; n && n.nodeType === 1 && n !== state.src.body; n = n.parentNode) {
+      var attr = imageListAttr(n);
+      if (attr) return { id: idOf(n), attr: attr };
+    }
+    for (n = s; n && n.nodeType === 1 && n.parentNode && n.parentNode !== state.src.body; n = n.parentNode) {
+      if (NOT_ITEMS.test(n.tagName)) continue;
+      var sig = itemSig(n), items = listItems(n.parentNode, sig);
+      if (items.length < 2) continue;
+      var pictures = items.every(function (c) { return !!itemImage(c); });
+      if (pictures || LIST_NAMES.test(listNames(n.parentNode))) return { id: idOf(n.parentNode), sig: sig };
+      return null;
+    }
+    return null;
+  }
+
+  /* All slideshows, carousels and galleries of the page. */
+  function pageLists() {
+    var out = [], seen = {};
+    $$('[' + ID + ']', state.src.body).forEach(function (s) {
+      var attr = imageListAttr(s);
+      if (attr) {
+        out.push({ id: idOf(s), attr: attr, name: listKind(s, true), count: attrImages(s.getAttribute(attr)).length, images: true });
+        return;
+      }
+      if (s.children.length < 2) return;
+      var groups = {};
+      Array.prototype.forEach.call(s.children, function (c) {
+        if (!c.hasAttribute(ID) || NOT_ITEMS.test(c.tagName)) return;
+        (groups[itemSig(c)] = groups[itemSig(c)] || []).push(c);
+      });
+      Object.keys(groups).forEach(function (sig) {
+        var items = groups[sig];
+        if (items.length < 2 || seen[idOf(s)]) return;
+        var pictures = items.every(function (c) { return !!itemImage(c); });
+        if (!pictures && !LIST_NAMES.test(listNames(s))) return;
+        seen[idOf(s)] = true;
+        out.push({ id: idOf(s), sig: sig, name: listKind(s, pictures), count: items.length, images: pictures });
+      });
+    });
+    return out.slice(0, 8);
+  }
+
+  function renderPageLists() {
+    var box = $('#page-lists');
+    box.innerHTML = '';
+    var lists = state.src ? pageLists() : [];
+    box.hidden = !lists.length;
+    if (!lists.length) return;
+    box.appendChild(el('h3', { text: t('onThisPage') }));
+    lists.forEach(function (l) {
+      box.appendChild(el('button', { 'class': 'page-list', onclick: function () { openItems(l); } }, [
+        icon('images'),
+        el('span', {}, [el('b', { text: l.name }), el('small', { text: t(l.attr || l.images ? 'countImages' : 'countEntries', { n: l.count }) })]),
+        el('span', { 'class': 'page-list-go', text: t('editList') })
+      ]));
+    });
+  }
+
+  function siteSrc(src) {
+    if (!src) return '';
+    if (/^([a-z]+:|\/\/|\/)/i.test(src)) return src;
+    return '/site/' + encodePath(joinPath(dirname(state.page), src.split(/[?#]/)[0]));
+  }
+
+  /* The text of an entry that can be changed here (a caption, a title...). */
+  function itemCaption(item) {
+    if (item.tagName === 'IMG') return null;
+    var c = item.querySelector('figcaption, summary, h1, h2, h3, h4, h5, h6, strong, b, p, a');
+    if (!c && hasText(item)) c = item;
+    return c;
+  }
+
+  function openItems(target) {
+    itemsTarget = target;
+    renderItems();
+    if (!$('#items-dialog').open) $('#items-dialog').showModal();
+  }
+
+  function itemsChanged() {
+    changed(state.selectedId, { reveal: false });
+    renderItems();
+  }
+
+  function renderItems() {
+    var target = itemsTarget, grid = $('#items-grid');
+    var host = target && srcById(target.id);
+    if (!host) { if ($('#items-dialog').open) $('#items-dialog').close(); return; }
+    grid.innerHTML = '';
+    var entries;
+    if (target.attr) {
+      var list = attrImages(host.getAttribute(target.attr) || '');
+      $('#items-title').textContent = t('itemsTitleImages', { name: listKind(host, true), n: list.length });
+      $('#items-add-label').textContent = t('itemAddImage');
+      entries = list.map(function (src) { return { src: src }; });
+    } else {
+      var items = listItems(host, target.sig);
+      var pictures = items.every(function (c) { return !!itemImage(c); });
+      $('#items-title').textContent = t(pictures ? 'itemsTitleImages' : 'itemsTitle', { name: listKind(host, pictures), n: items.length });
+      $('#items-add-label').textContent = t(pictures ? 'itemAddImage' : 'itemAdd');
+      entries = items.map(function (item) {
+        var img = itemImage(item);
+        return { item: item, src: img ? img.getAttribute('src') : '', img: img, caption: itemCaption(item) };
+      });
+    }
+    renderItemSettings(host);
+    entries.forEach(function (entry, i) {
+      var thumb = entry.src ? el('img', { src: siteSrc(entry.src), alt: '', loading: 'lazy', draggable: 'false' })
+        : el('span', { 'class': 'item-empty', text: entry.caption ? entry.caption.textContent.trim().slice(0, 40) : t('itemNoPicture') });
+      var tools = el('div', { 'class': 'item-tools' }, [
+        el('button', { type: 'button', 'class': 'icon-btn small flip', title: t('itemLeft'), disabled: i === 0 ? '' : null, onclick: function () { moveItem(i, i - 1); } }, [icon('chevron')]),
+        el('button', { type: 'button', 'class': 'icon-btn small', title: t('itemRight'), disabled: i === entries.length - 1 ? '' : null, onclick: function () { moveItem(i, i + 1); } }, [icon('chevron')]),
+        entry.src || entry.img ? el('button', { type: 'button', 'class': 'icon-btn small', title: t('itemPicture'), onclick: function () { replaceItemImage(i); } }, [icon('image')]) : null,
+        el('button', { type: 'button', 'class': 'icon-btn small', title: t('itemCopy'), onclick: function () { duplicateItem(i); } }, [icon('copy')]),
+        el('button', { type: 'button', 'class': 'icon-btn small danger', title: t('itemDelete'), disabled: entries.length < 2 ? '' : null, onclick: function () { removeItem(i); } }, [icon('trash')])
+      ]);
+      var fields = [];
+      if (entry.caption) {
+        var locked = entry.caption.children.length > 0;
+        var input = el('input', { type: 'text', value: entry.caption.textContent.replace(/\s+/g, ' ').trim(), placeholder: t('itemCaption'),
+          title: locked ? t('itemCaptionLocked') : t('itemCaption'), disabled: locked ? '' : null });
+        input.addEventListener('change', function () {
+          entry.caption.textContent = input.value;
+          itemsChanged();
+        });
+        fields.push(input);
+      }
+      if (entry.img) {
+        var alt = el('input', { type: 'text', value: entry.img.getAttribute('alt') || '', placeholder: t('itemAlt'), title: t('itemAlt'), 'class': 'item-alt' });
+        alt.addEventListener('change', function () {
+          entry.img.setAttribute('alt', alt.value);
+          itemsChanged();
+        });
+        fields.push(alt);
+      }
+      var card = el('div', { 'class': 'item-card', draggable: 'true' }, [el('div', { 'class': 'item-thumb' }, [thumb, el('span', { 'class': 'item-no', text: String(i + 1) })]), tools].concat(fields));
+      card.addEventListener('dragstart', function (e) {
+        if (/^(INPUT|BUTTON)$/.test(e.target.tagName)) return;
+        itemsDrag = i;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(i));
+        card.classList.add('dragging');
+      });
+      card.addEventListener('dragend', function () { itemsDrag = null; card.classList.remove('dragging'); });
+      card.addEventListener('dragover', function (e) {
+        if (itemsDrag === null) return;
+        e.preventDefault();
+        card.classList.add('drop-target');
+      });
+      card.addEventListener('dragleave', function () { card.classList.remove('drop-target'); });
+      card.addEventListener('drop', function (e) {
+        card.classList.remove('drop-target');
+        if (itemsDrag === null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var from = itemsDrag;
+        itemsDrag = null;
+        moveItem(from, i);
+      });
+      grid.appendChild(card);
+    });
+  }
+
+  function itemsHost() {
+    return itemsTarget && srcById(itemsTarget.id);
+  }
+
+  function setAttrList(host, list) {
+    var old = host.getAttribute(itemsTarget.attr) || '';
+    host.setAttribute(itemsTarget.attr, list.join(/,\s/.test(old) ? ', ' : ','));
+    itemsChanged();
+  }
+
+  function moveItem(from, to) {
+    var host = itemsHost();
+    if (!host || from === to || to < 0) return;
+    if (itemsTarget.attr) {
+      var list = attrImages(host.getAttribute(itemsTarget.attr));
+      if (to >= list.length) return;
+      list.splice(to, 0, list.splice(from, 1)[0]);
+      return setAttrList(host, list);
+    }
+    var items = listItems(host, itemsTarget.sig);
+    if (to >= items.length) return;
+    var node = items[from], ref = items[to];
+    srcRemove(node);
+    if (to > from) insertAfter(node, ref);
+    else srcInsert(host, node, ref);
+    itemsChanged();
+  }
+
+  /* Put node right after ref, on its own line with the same indentation. */
+  function insertAfter(node, ref) {
+    var ws = ref.previousSibling;
+    if (ws && ws.nodeType === 3 && !ws.nodeValue.trim()) {
+      var copy = ws.cloneNode();
+      ref.parentNode.insertBefore(copy, ref.nextSibling);
+      ref.parentNode.insertBefore(node, copy.nextSibling);
+    } else {
+      ref.parentNode.insertBefore(node, ref.nextSibling);
+    }
+  }
+
+  function cloneItem(item) {
+    var copy = item.cloneNode(true);
+    [copy].concat($$('*', copy)).forEach(function (n) { n.removeAttribute(ID); });
+    annotate(copy);
+    return copy;
+  }
+
+  function duplicateItem(i, then) {
+    var host = itemsHost();
+    if (!host) return;
+    if (itemsTarget.attr) {
+      var list = attrImages(host.getAttribute(itemsTarget.attr));
+      list.splice(i + 1, 0, list[i]);
+      return setAttrList(host, list);
+    }
+    var items = listItems(host, itemsTarget.sig);
+    var copy = cloneItem(items[i]);
+    insertAfter(copy, items[i]);
+    if (then) then(copy);
+    itemsChanged();
+  }
+
+  function removeItem(i) {
+    var host = itemsHost();
+    if (!host) return;
+    if (itemsTarget.attr) {
+      var list = attrImages(host.getAttribute(itemsTarget.attr));
+      if (list.length < 2) return;
+      list.splice(i, 1);
+      return setAttrList(host, list);
+    }
+    var items = listItems(host, itemsTarget.sig);
+    if (items.length < 2) return;
+    srcRemove(items[i]);
+    itemsChanged();
+  }
+
+  function setItemImage(img, src) {
+    img.setAttribute('src', src);
+    img.removeAttribute('srcset'); // the old responsive versions would win otherwise
+  }
+
+  function replaceItemImage(i) {
+    openImagePicker(function (src) {
+      var host = itemsHost();
+      if (!host) return;
+      if (itemsTarget.attr) {
+        var list = attrImages(host.getAttribute(itemsTarget.attr));
+        list[i] = src;
+        return setAttrList(host, list);
+      }
+      var img = itemImage(listItems(host, itemsTarget.sig)[i]);
+      if (img) { setItemImage(img, src); itemsChanged(); }
+    });
+  }
+
+  /* Add pictures (paths relative to the page) as new entries at the end. */
+  function addItemImages(paths) {
+    var host = itemsHost();
+    if (!host || !paths.length) return;
+    if (itemsTarget.attr) {
+      return setAttrList(host, attrImages(host.getAttribute(itemsTarget.attr)).concat(paths));
+    }
+    var items = listItems(host, itemsTarget.sig), last = items[items.length - 1];
+    paths.forEach(function (src) {
+      var copy = cloneItem(last), img = itemImage(copy), caption = itemCaption(copy);
+      if (img) {
+        setItemImage(img, src);
+        img.setAttribute('alt', baseName(src).replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '));
+      }
+      if (caption && caption !== copy && !caption.children.length) caption.textContent = '';
+      insertAfter(copy, last);
+      last = copy;
+    });
+    itemsChanged();
+  }
+
+  $('#items-add').addEventListener('click', function () {
+    var host = itemsHost();
+    if (!host) return;
+    var pictures = itemsTarget.attr || listItems(host, itemsTarget.sig).every(function (c) { return !!itemImage(c); });
+    if (pictures) openImagePicker(function (src) { addItemImages([src]); });
+    else duplicateItem(listItems(host, itemsTarget.sig).length - 1);
+  });
+
+  function uploadItemFiles(files) {
+    var list = Array.prototype.filter.call(files || [], function (f) { return /^image\//.test(f.type); });
+    if (!list.length) return;
+    var folder = uploadFolder(), paths = [];
+    list.reduce(function (chain, file) {
+      return chain.then(function () {
+        return api('/api/upload?dir=' + encodeURIComponent(folder) + '&name=' + encodeURIComponent(file.name), file, true)
+          .then(function (res) { paths.push(relFromPage(res.path)); });
+      });
+    }, Promise.resolve()).then(function () {
+      return refreshSite();
+    }).then(function () { addItemImages(paths); }).catch(fail);
+  }
+
+  $('#items-upload').addEventListener('change', function (e) {
+    var files = e.target.files;
+    uploadItemFiles(files);
+    e.target.value = '';
+  });
+  $('#items-grid').addEventListener('dragover', function (e) {
+    if (itemsDrag === null && e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') >= 0) {
+      e.preventDefault();
+      $('#items-grid').classList.add('file-over');
+    }
+  });
+  $('#items-grid').addEventListener('dragleave', function () { $('#items-grid').classList.remove('file-over'); });
+  $('#items-grid').addEventListener('drop', function (e) {
+    $('#items-grid').classList.remove('file-over');
+    if (itemsDrag !== null || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    uploadItemFiles(e.dataTransfer.files);
+  });
+  $('#items-dialog').addEventListener('close', function () { itemsTarget = null; renderPanels(); });
+
+  // -- settings of the editor's own carousels and slideshows
+
+  var RATIOS = [['wide', '16/9'], ['photo', '4/3'], ['square', '1/1'], ['tall', '3/4']];
+
+  function styleWith(style, prop, value) {
+    var found = false;
+    var parts = (style || '').split(';').map(function (d) { return d.trim(); }).filter(Boolean).map(function (d) {
+      if (d.split(':')[0].trim().toLowerCase() !== prop) return d;
+      found = true;
+      return prop + ':' + value;
+    });
+    if (!found) parts.push(prop + ':' + value);
+    return parts.join(';');
+  }
+
+  function itemWidth(perView) {
+    return perView > 1 ? '0 0 max(min(100%, 240px), calc((100% - ' + (perView - 1) * 16 + 'px) / ' + perView + '))' : '0 0 100%';
+  }
+
+  function renderItemSettings(host) {
+    var box = $('#items-settings');
+    box.innerHTML = '';
+    var carousel = !itemsTarget.attr && host.hasAttribute('data-carousel-track') && host.parentNode.hasAttribute('data-carousel') ? host.parentNode : null;
+    box.hidden = !carousel;
+    if (!carousel) return;
+    var items = listItems(host, itemsTarget.sig);
+    var seg = function (labelText, options, current, apply) {
+      var group = el('div', { 'class': 'seg-group' });
+      options.forEach(function (o) {
+        group.appendChild(el('button', { type: 'button', 'class': 'seg-btn' + (String(o[0]) === String(current) ? ' active' : ''), text: o[1],
+          onclick: function () { apply(o[0]); itemsChanged(); } }));
+      });
+      return el('div', { 'class': 'items-setting' }, [el('span', { text: labelText }), group]);
+    };
+    var perView = +(carousel.getAttribute('data-per-view') || 1);
+    box.appendChild(seg(t('perView'), [[1, '1'], [2, '2'], [3, '3'], [4, '4']], perView, function (n) {
+      carousel.setAttribute('data-per-view', String(n));
+      items.forEach(function (item) { item.setAttribute('style', styleWith(item.getAttribute('style'), 'flex', itemWidth(n))); });
+    }));
+    var firstImg = itemImage(items[0]);
+    var ratio = firstImg ? (/aspect-ratio:\s*([\d.]+\s*\/\s*[\d.]+)/.exec(firstImg.getAttribute('style') || '') || [])[1] : null;
+    box.appendChild(seg(t('ratio'), RATIOS.map(function (r) { return [r[1], t('ratio_' + r[0])]; }), (ratio || '').replace(/\s/g, ''), function (r) {
+      items.forEach(function (item) {
+        var img = itemImage(item);
+        if (img) img.setAttribute('style', styleWith(img.getAttribute('style'), 'aspect-ratio', r));
+      });
+    }));
+    var auto = carousel.getAttribute('data-autoplay') || '0';
+    box.appendChild(seg(t('autoplay'), [['0', t('autoplayOff')], ['3', t('seconds', { n: 3 })], ['5', t('seconds', { n: 5 })], ['8', t('seconds', { n: 8 })]], auto, function (v) {
+      carousel.setAttribute('data-autoplay', v);
+    }));
+    var arrows = $$('[data-carousel-prev], [data-carousel-next]', carousel);
+    var checks = el('div', { 'class': 'items-setting' });
+    if (arrows.length) {
+      var arrowBox = el('input', { type: 'checkbox' });
+      arrowBox.checked = !arrows[0].hasAttribute('hidden');
+      arrowBox.addEventListener('change', function () {
+        arrows.forEach(function (a) { if (arrowBox.checked) a.removeAttribute('hidden'); else a.setAttribute('hidden', ''); });
+        itemsChanged();
+      });
+      checks.appendChild(el('label', { 'class': 'check' }, [arrowBox, el('span', { text: t('showArrows') })]));
+    }
+    var dotBox = el('input', { type: 'checkbox' });
+    dotBox.checked = carousel.getAttribute('data-dots') === 'true';
+    dotBox.addEventListener('change', function () {
+      if (dotBox.checked) carousel.setAttribute('data-dots', 'true'); else carousel.removeAttribute('data-dots');
+      itemsChanged();
+    });
+    checks.appendChild(el('label', { 'class': 'check' }, [dotBox, el('span', { text: t('showDots') })]));
+    box.appendChild(checks);
+  }
+
+  // -- the small script that gives the editor's carousels arrows, dots and autoplay
+
+  var CAROUSEL_SCRIPT = [
+    '/*',
+    ' * Carousels and slideshows made with WYSIWYG Edit: arrows, dots and moving on by',
+    ' * itself. Without this script they still work by swiping or scrolling.',
+    ' * Settings on the element: data-autoplay="5" (seconds), data-dots="true".',
+    ' */',
+    '(function () {',
+    '  var quiet = window.matchMedia && window.matchMedia(\'(prefers-reduced-motion: reduce)\').matches;',
+    '  function editing() {',
+    '    // Do not move on while the page is being changed in the editor.',
+    '    try { return window.parent !== window && window.parent.WSE && !window.parent.WSE.state.interact; } catch (e) { return false; }',
+    '  }',
+    '  document.querySelectorAll(\'[data-carousel]\').forEach(function (box) {',
+    '    var track = box.querySelector(\'[data-carousel-track]\');',
+    '    if (!track) return;',
+    '    function go(dir) {',
+    '      var max = track.scrollWidth - track.clientWidth;',
+    '      var left = track.scrollLeft + dir * track.clientWidth;',
+    '      if (dir > 0 && track.scrollLeft >= max - 4) left = 0;',
+    '      if (dir < 0 && track.scrollLeft <= 4) left = max;',
+    '      track.scrollTo({ left: left, behavior: \'smooth\' });',
+    '    }',
+    '    box.querySelectorAll(\'[data-carousel-prev]\').forEach(function (b) { b.addEventListener(\'click\', function () { go(-1); }); });',
+    '    box.querySelectorAll(\'[data-carousel-next]\').forEach(function (b) { b.addEventListener(\'click\', function () { go(1); }); });',
+    '    // Arrows only when there is more to see than fits.',
+    '    var arrows = box.querySelectorAll(\'[data-carousel-prev], [data-carousel-next]\');',
+    '    function fit() {',
+    '      var more = track.scrollWidth > track.clientWidth + 4;',
+    '      arrows.forEach(function (b) { b.style.visibility = more ? \'\' : \'hidden\'; });',
+    '    }',
+    '    window.addEventListener(\'resize\', fit);',
+    '    fit();',
+    '    if (box.getAttribute(\'data-dots\') === \'true\') {',
+    '      var dots = document.createElement(\'div\');',
+    '      dots.className = \'carousel-dots\';',
+    '      dots.style.cssText = \'display:flex;justify-content:center;gap:8px;margin-top:14px\';',
+    '      box.appendChild(dots);',
+    '      var update = function () {',
+    '        var pages = Math.max(1, Math.round(track.scrollWidth / Math.max(1, track.clientWidth)));',
+    '        var current = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));',
+    '        if (dots.children.length !== pages) {',
+    '          dots.innerHTML = \'\';',
+    '          for (var i = 0; i < pages; i++) {',
+    '            var dot = document.createElement(\'button\');',
+    '            dot.type = \'button\';',
+    '            dot.setAttribute(\'aria-label\', String(i + 1));',
+    '            dot.style.cssText = \'width:10px;height:10px;padding:0;border:0;border-radius:50%;cursor:pointer;background:currentColor\';',
+    '            dot.addEventListener(\'click\', (function (n) { return function () { track.scrollTo({ left: n * track.clientWidth, behavior: \'smooth\' }); }; })(i));',
+    '            dots.appendChild(dot);',
+    '          }',
+    '        }',
+    '        Array.prototype.forEach.call(dots.children, function (d, i) { d.style.opacity = i === current ? \'1\' : \'.3\'; });',
+    '      };',
+    '      track.addEventListener(\'scroll\', update, { passive: true });',
+    '      window.addEventListener(\'resize\', update);',
+    '      update();',
+    '    }',
+    '    var seconds = parseFloat(box.getAttribute(\'data-autoplay\'));',
+    '    if (seconds > 0 && !quiet) {',
+    '      var paused = false;',
+    '      box.addEventListener(\'mouseenter\', function () { paused = true; });',
+    '      box.addEventListener(\'mouseleave\', function () { paused = false; });',
+    '      box.addEventListener(\'focusin\', function () { paused = true; });',
+    '      box.addEventListener(\'focusout\', function () { paused = false; });',
+    '      setInterval(function () { if (!paused && !document.hidden && !editing()) go(1); }, seconds * 1000);',
+    '    }',
+    '  });',
+    '})();',
+    ''
+  ].join('\n');
+
+  /* The editor's carousels need js/carousel.js: put it into the site and onto the page. */
+  function ensureCarouselScript() {
+    var path = 'js/carousel.js';
+    var onPage = state.scripts.some(function (text) { return /carousel\.js/.test(text); }) ||
+      $$('script[src]', state.src.body).some(function (sc) { return /carousel\.js$/.test(sc.getAttribute('src')); });
+    return api('/api/page?path=' + encodeURIComponent(path)).catch(function () {
+      return api('/api/save', { path: path, content: CAROUSEL_SCRIPT });
+    }).then(function () {
+      if (onPage) return;
+      var tag = state.src.createElement('script');
+      tag.setAttribute('src', relFromPage(path));
+      annotate(tag);
+      srcInsert(state.src.body, tag, null);
     });
   }
 

@@ -31,7 +31,7 @@ RECENT_FILE = CONFIG_DIR / "recent.json"
 
 HTML_EXT = {".html", ".htm"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".ico"}
-SAVE_EXT = HTML_EXT | {".css"}
+SAVE_EXT = HTML_EXT | {".css", ".js"}
 NEW_SITE_EXT = {".html", ".css", ".js", ".svg", ".txt", ".json"}
 SKIP_DIRS = {".git", "node_modules", ".wysiwyg-edit", "__pycache__"}
 MAX_UPLOAD = 50 * 1024 * 1024
@@ -196,6 +196,7 @@ def write_keeping_encoding(target, content):
     if target.exists() and target not in STATE.backed_up:
         backup_path = backup(target)
         STATE.backed_up.add(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".wse-tmp")
     # Keep the file's original encoding (older sites may use Windows-1252).
     tmp.write_bytes(content.encode(encoding, "xmlcharrefreplace"))
@@ -446,7 +447,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
     def api_save(self, data):
         target = safe_path(data.get("path", ""))
         if target.suffix.lower() not in SAVE_EXT:
-            raise ValueError("Only HTML pages and CSS files can be saved")
+            raise ValueError("Only HTML, CSS and JavaScript files can be saved")
         content = data.get("content")
         if not isinstance(content, str):
             raise ValueError("Missing content")

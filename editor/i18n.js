@@ -189,7 +189,22 @@
       secPhone: 'Phone', secEmail: 'Email', secHoursTitle: 'Opening hours',
       secHours: [['Mon – Fri', '8 am – 6 pm'], ['Sat', '9 am – 1 pm']],
       secGalleryTitle: 'Pictures', secFaqTitle: 'Frequently asked questions',
-      placeholderAlt: 'Placeholder picture'
+      placeholderAlt: 'Placeholder picture',
+      manageItems: 'Manage pictures', manageItemsHint: 'Change, sort, add or remove the pictures and entries',
+      itemsTitle: '{name} · {n} entries', itemsTitleImages: '{name} · {n} pictures',
+      itemsHelp: 'Drag to change the order, or drop pictures from your computer here. Changes show on the page at once.',
+      itemAdd: 'Add entry', itemAddImage: 'Add picture', itemUpload: 'Upload pictures…', itemPicture: 'Change picture',
+      itemCopy: 'Duplicate', itemDelete: 'Remove', itemLeft: 'Move to the front', itemRight: 'Move to the back',
+      itemCaption: 'Caption', itemAlt: 'Description for screen readers and search engines',
+      itemCaptionLocked: 'This text has formatting: change it on the page with a double-click.',
+      itemNoPicture: 'no picture', itemsSettings: 'Settings',
+      perView: 'Pictures side by side', ratio: 'Format', ratio_wide: 'Wide', ratio_photo: 'Photo', ratio_square: 'Square', ratio_tall: 'Tall',
+      autoplay: 'Move on by itself', autoplayOff: 'Off', seconds: '{n} s', showArrows: 'Arrows', showDots: 'Dots',
+      onThisPage: 'On this page', editList: 'Manage',
+      kind_slideshow: 'Slideshow', kind_carousel: 'Carousel', kind_gallery: 'Gallery', kind_pictures: 'Pictures', kind_list: 'List',
+      countEntries: '{n} entries', countImages: '{n} pictures',
+      blkCarousel: 'Carousel', blkSlideshow: 'Slideshow', secCarouselTitle: 'Our team', secPersonCaption: 'Name – role',
+      secSlideCaption: 'A short caption', prevSlide: 'Previous', nextSlide: 'Next'
     },
     de: {
       layers: 'Struktur',
@@ -379,7 +394,22 @@
       secPhone: 'Telefon', secEmail: 'E-Mail', secHoursTitle: 'Öffnungszeiten',
       secHours: [['Mo – Fr', '8 – 18 Uhr'], ['Sa', '9 – 13 Uhr']],
       secGalleryTitle: 'Bilder', secFaqTitle: 'Häufige Fragen',
-      placeholderAlt: 'Platzhalterbild'
+      placeholderAlt: 'Platzhalterbild',
+      manageItems: 'Bilder verwalten', manageItemsHint: 'Bilder und Einträge tauschen, sortieren, hinzufügen oder entfernen',
+      itemsTitle: '{name} · {n} Einträge', itemsTitleImages: '{name} · {n} Bilder',
+      itemsHelp: 'Zum Sortieren ziehen, oder Bilder von deinem Computer hier hineinziehen. Änderungen siehst du sofort auf der Seite.',
+      itemAdd: 'Eintrag hinzufügen', itemAddImage: 'Bild hinzufügen', itemUpload: 'Bilder hochladen…', itemPicture: 'Bild tauschen',
+      itemCopy: 'Duplizieren', itemDelete: 'Entfernen', itemLeft: 'Nach vorn', itemRight: 'Nach hinten',
+      itemCaption: 'Bildunterschrift', itemAlt: 'Beschreibung für Vorlese-Programme und Suchmaschinen',
+      itemCaptionLocked: 'Dieser Text ist formatiert: ändere ihn auf der Seite mit Doppelklick.',
+      itemNoPicture: 'kein Bild', itemsSettings: 'Einstellungen',
+      perView: 'Bilder nebeneinander', ratio: 'Format', ratio_wide: 'Breit', ratio_photo: 'Foto', ratio_square: 'Quadrat', ratio_tall: 'Hoch',
+      autoplay: 'Automatisch weiter', autoplayOff: 'Aus', seconds: '{n} s', showArrows: 'Pfeile', showDots: 'Punkte',
+      onThisPage: 'Auf dieser Seite', editList: 'Verwalten',
+      kind_slideshow: 'Slideshow', kind_carousel: 'Karussell', kind_gallery: 'Galerie', kind_pictures: 'Bilder', kind_list: 'Liste',
+      countEntries: '{n} Einträge', countImages: '{n} Bilder',
+      blkCarousel: 'Karussell', blkSlideshow: 'Slideshow', secCarouselTitle: 'Unser Team', secPersonCaption: 'Name – Aufgabe',
+      secSlideCaption: 'Eine kurze Bildunterschrift', prevSlide: 'Zurück', nextSlide: 'Weiter'
     }
   };
 
